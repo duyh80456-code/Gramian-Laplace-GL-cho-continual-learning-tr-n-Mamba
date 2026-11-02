@@ -50,7 +50,10 @@ No source ZIP or code overlay is attached to Kaggle.
    Leave DATA_ROOT=None for a full Input scan; set it only to restrict the search.
    PRETRAINED is also found automatically through directory symlinks.
 3. Run All. Source clone, isolated dependencies, registered CPU checks and
-   import/GPU checks precede training. The first configuration cell exposes
+   import/GPU checks precede training. CUDA extensions are installed from the
+   official GitHub release wheels selected for Python3.11, Torch2.2.2, CUDA
+   major version and C++ ABI; source compilation is disabled. Full installation
+   output is saved to glcl_outputs/environment_install.log, with a JSON report. The first configuration cell exposes
    REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.
    The clone cell may be rerun safely: it leaves the source directory before
    refreshing that checkout and keeps outputs and the environment intact.
@@ -92,6 +95,8 @@ execution has not been performed locally.
 - `glcl/diagnostics.py`: measurement-only GL/KFAC/EWC/input-proxy comparisons.
 - `glcl/select.py`: validation-only lambda selection with identity checks.
 - `glcl/kaggle.py`: two-lane launcher, checkpoint archives and deadline handling.
+- `scripts/install_cuda_extensions.py`: official wheel selection and binary-only
+  installation, preserving Torch/dependencies and saving full install diagnostics.
 - `scripts/prepare_imagenet_r.py`: full Input filename search, safe archive
   extraction, original-dataset download fallback and exact official split staging;
   preparation provenance is included in the Output archive.

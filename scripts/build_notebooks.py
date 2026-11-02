@@ -87,12 +87,11 @@ if not (VENV/'bin/python').exists():
 PYTHON = str(VENV/'bin/python')
 subprocess.run([sys.executable, '-m', 'uv', 'pip', 'install', '--python', PYTHON,
                 '-r', str(REPO/'requirements-kaggle.txt'), 'pip==24.2'], check=True)
-# Build for T4 (sm75) using Kaggle's CUDA toolkit. Compilation has not been
-# validated in this local CPU environment; failures must stop this notebook.
-env = dict(os.environ, TORCH_CUDA_ARCH_LIST='7.5', MAX_JOBS='2',
-           MAMBA_FORCE_BUILD='TRUE', CAUSAL_CONV1D_FORCE_BUILD='TRUE')
-subprocess.run([PYTHON, '-m', 'pip', 'install', '--no-build-isolation',
-                'causal-conv1d==1.4.0', 'mamba-ssm==2.2.2'], env=env, check=True)
+# Install official CUDA wheels for the isolated Torch/Python/ABI combination.
+# No source compilation and no dependency resolution that could upgrade Torch.
+subprocess.run([PYTHON, 'scripts/install_cuda_extensions.py',
+                '--log', str(OUTPUT/'environment_install.log'),
+                '--report', str(OUTPUT/'environment_install.json')], env=ENV, check=True)
 ENV = dict(os.environ, PYTHONPATH=str(REPO), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
            PYTHONUNBUFFERED='1', TQDM_DISABLE='1')
 subprocess.run([PYTHON, '-c', "import torch; print(torch.__version__); print([(i,torch.cuda.get_device_name(i)) for i in range(torch.cuda.device_count())]); assert torch.cuda.device_count()==2"], env=ENV, check=True)
@@ -149,9 +148,9 @@ for path in (OUTPUT/'selection.json', OUTPUT/'session.json', OUTPUT/'comparison.
         print(path.name, path.read_text())
 print('Archive: /kaggle/working/glcl/glcl_outputs.tar.gz; attach it as previous Output to resume.')
 '''
-core_install, kernel_install = install.split('# Build for T4', 1)
+core_install, kernel_install = install.split('# Install official CUDA wheels', 1)
 core_install += "\nENV = dict(os.environ, PYTHONPATH=str(REPO), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', PYTHONUNBUFFERED='1', TQDM_DISABLE='1')\n"
-kernel_install = '# Build for T4' + kernel_install
+kernel_install = '# Install official CUDA wheels' + kernel_install
 
 
 for name, stage, title, description in [

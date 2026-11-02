@@ -140,7 +140,8 @@ the official projector does not protect dt_proj. These are reporting limitations
   worker per lane. No DDP communication. These are initial memory-conservative
   choices, not a measured throughput optimum. VRAM and CUDA builds are untested.
 - Isolated Python3.11, official torch2.2.2/timm1.0.9 and pinned supplemental
-  dependencies. T4 sm75 kernels built explicitly. No host environment replacement.
+  dependencies. Official binary wheels are selected for the runtime CUDA/Torch/
+  Python/C++ ABI; source builds are disabled. No host environment replacement.
 - Atomic latest checkpoint every epoch and after each evaluated task; includes
   model, optimizer, scheduler, RNG, heads, class maps, metrics, projector matrices,
   GL anchor/operator paths. Parameter-id maps are remapped by name on restore.
@@ -241,3 +242,36 @@ canonical extraction, exact24000/6000 staging, cache reuse and whole-Input looku
 through nested symlinks passed. These are filesystem/preparation checks, not an
 image-decoding or model-training run. The real author's archive was separately
 checked by HTTP HEAD and a bounded read of five actual image headers.
+
+### CUDA extension installation after the reported build failures
+
+The user's complete pasted log confirms Python3.11, Torch2.2.2, CUDA12.1 and
+Triton2.2.0. It still contains no specific compiler diagnostic: both setup.py
+wheel builds failed. The original notebook unnecessarily set MAMBA_FORCE_BUILD
+and CAUSAL_CONV1D_FORCE_BUILD to TRUE, bypassing the upstream cached-wheel route.
+That forced-build path is removed.
+
+The installer now selects direct official GitHub release .whl URLs for pinned
+causal-conv1d1.4.0 and mamba-ssm2.2.2. The upstream setup.py files map CUDA11.x
+Torch builds to cu118 and CUDA12.x to cu122; selection also uses Python version,
+Torch minor version, Linux architecture and torch._C._GLIBCXX_USE_CXX11_ABI.
+For the reported standard Torch2.2.2/Python3.11/CUDA12 environment, the matching
+cp311 Linux x86_64 ABI-FALSE assets were confirmed in both official release APIs
+and via HTTP HEAD200 (104653602 and323776477 bytes). No400MB wheel download or
+Linux CUDA import was attempted on this local macOS host.
+
+Pip receives only those .whl URLs, --only-binary=:all: and --no-deps; there is no
+source-build fallback or Torch upgrade. Forced-build env vars are removed from
+the child environment. Existing matching installations are reused only after a
+fresh-process import/API check succeeds. Otherwise the wheels are reinstalled.
+The full pip/import log and runtime/URLs/versions/status JSON are written under
+Output. Importing the native extensions and the official fast-path APIs checks
+loading/ABI availability; no model forward or E2E smoke test is added.
+
+Official source build flags include sm70 binaries (not an explicit sm75 target).
+NVIDIA's Turing guide documents Volta-to-Turing binary forward compatibility,
+with limitations such as shared-memory capacity. This is compatibility evidence,
+not a measured guarantee for the full model; actual T4 execution remains pending.
+Sources: https://github.com/Dao-AILab/causal-conv1d/blob/v1.4.0/setup.py ;
+https://github.com/state-spaces/mamba/blob/v2.2.2/setup.py ;
+https://docs.nvidia.com/cuda/turing-compatibility-guide/index.html .
