@@ -102,6 +102,28 @@ execution has not been performed locally.
   preparation provenance is included in the Output archive.
 - `PREREGISTRATION.md`: claims and selection rules registered before training.
 
+## Live metrics and resume
+
+Both01 and02 checkpoint each epoch and evaluated task, including optimizer,
+scheduler, RNG, stored heads/projectors and GL state. Attach the previous Output
+and rerun the same stage. An interrupted epoch is repeated from its latest
+checkpoint; the registered task/epoch horizon is preserved.
+
+02 now follows existing console logs and prints loss/train_acc after each epoch,
+per-task test_acc, aggregate seen-class test_acc and forgetting after task
+evaluation, plus final AA/AIA and timing. The JSON snapshot is
+`glcl_outputs/performance_latest.json`. This observer does not import the model,
+call evaluation, change RNG or alter the training source/checkpoint identity.
+The observer is embedded in02, with its SHA256 recorded in the notebook protocol.
+01's notebook and its currently running job are unchanged. Its validation accuracy
+is evaluated on the10% training holdout at task boundaries and recorded in its
+console.log. 02's official evaluation data is labeled test_acc, not val_acc;
+there is no separate held-out validation set in the full-data main run.
+
+The runtime pin remains the same in01/02 for this logging-only update. Do not
+interrupt an active01 just to update its display. A running launcher does not
+acquire notebook UI changes automatically.
+
 ## Interpretation and remaining validation
 
 Official source is pinned at

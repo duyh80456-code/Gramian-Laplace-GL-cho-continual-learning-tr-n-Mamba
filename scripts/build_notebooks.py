@@ -9,6 +9,7 @@ import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--stage', action='append', choices=['tests', 'tune', 'main'], help='Generate only selected notebook stages; default: all')
 parser.add_argument('--commit', help='Immutable source commit available on origin; defaults to local HEAD')
 args = parser.parse_args()
 pin = args.commit or subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
@@ -133,6 +134,7 @@ jobs_path = RUN_ROOT/'effective_jobs'/f'{STAGE}.json'
 atomic_json(JOBS, jobs_path)
 atomic_json(dict(run_tag=RUN_TAG, stage=STAGE, seed=0, source_commit=CODE_COMMIT,
                  jobs=JOBS, workers=2, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1,
+                 performance_observer_sha256=globals().get('PERFORMANCE_OBSERVER_SHA256'),
                  protocol='Full registered horizon; exit75 resumes without truncation'),
             OUTPUT/f'notebook_protocol_{STAGE}.json')
 command = [PYTHON, '-m', 'glcl.kaggle', '--stage', STAGE, '--root', str(OUTPUT),
@@ -160,6 +162,10 @@ for name, stage, title, description in [
      'GPU0: GL lambda0.1,1,10. GPU1: MambaCL+GL lambda0.1,1,10. Each candidate uses the first three tasks, 50 epochs, stratified10% training holdout. Max validation AIA, ties use smaller lambda. Repeat with previous Output until COMPLETE.'),
     ('02_main_s0', 'main', 'Full ImageNet-R 10-split — seed 0',
      'Attach completed01 Output containing selection.json. If01 is PAUSED, resume01 first. GPU0: MambaCL then MambaCL+GL; GPU1: GL. Full10 tasks x50 epochs, effective batch200, microbatch5. Main runs start from pretrained weights and use full training data. Stop after seed0 stage one.')]:
+    if args.stage and stage not in args.stage:
+        continue
+    if stage == 'main':
+        description += ' Live output includes epoch loss/train_acc and task-end test_acc/forgetting; final AA/AIA are printed when each arm completes. The observer only reads logs; training and resume are unchanged.'
     if stage == 'tune':
         jobs = [[dict(name=f'{arm}_lambda{strength:g}', arm=arm, strength=strength, stage=stage)
                  for strength in (.1, 1., 10.)] for arm in ('GL', 'MambaCL+GL')]
@@ -178,14 +184,24 @@ JOBS = {jobs!r}
 import time
 SESSION_START = time.time()
 """
+    stage_launch = launch
+    if stage == 'main':
+        observer = (ROOT/'scripts/live_performance.py').read_text()
+        # Embed a read-only observer in02, keeping the runtime source commit
+        # exactly equal to the already running01 and preserving resume identity.
+        stage_launch = ('PERFORMANCE_OBSERVER = ' + repr(observer) + '\n'
+                        + 'PERFORMANCE_OBSERVER_SHA256 = ' + repr(hashlib.sha256(observer.encode()).hexdigest()) + '\n' + launch)
+        stage_launch = stage_launch.replace(
+            'result = subprocess.run(command, env=ENV)',
+            "observer = [PYTHON, '-u', '-c', PERFORMANCE_OBSERVER, '--root', str(OUTPUT), '--jobs', str(jobs_path), '--', *command]\nresult = subprocess.run(observer, env=ENV)")
     cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
-        cells += [cell('code', restore), cell('code', kernel_install), cell('code', launch), cell('code', report)]
+        cells += [cell('code', restore), cell('code', kernel_install), cell('code', stage_launch), cell('code', report)]
     notebook = dict(cells=cells, metadata=dict(kernelspec=dict(display_name='Python 3', language='python', name='python3'),
                     language_info=dict(name='python', version='3.11'), kaggle=dict(accelerator='nvidiaTeslaT4', isInternetEnabled=True, language='python', sourceType='notebook')), nbformat=4, nbformat_minor=5)
     path = ROOT/'notebooks'/f'{name}.ipynb'
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + '\n')
 print('Pinned GitHub source commit:', pin)
-print('Notebooks:00_section6,01_tune_s0,02_main_s0; clone via Kaggle github_token; no source ZIP')
+print('Generated stages:', args.stage or ['tests', 'tune', 'main'], '; clone via Kaggle github_token; no source ZIP')

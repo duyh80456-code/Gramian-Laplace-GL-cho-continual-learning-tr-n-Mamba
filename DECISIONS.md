@@ -275,3 +275,23 @@ not a measured guarantee for the full model; actual T4 execution remains pending
 Sources: https://github.com/Dao-AILab/causal-conv1d/blob/v1.4.0/setup.py ;
 https://github.com/state-spaces/mamba/blob/v2.2.2/setup.py ;
 https://docs.nvidia.com/cuda/turing-compatibility-guide/index.html .
+
+### Live performance display and the active01 run
+
+The user requested visible performance, validation accuracy, and confirmed that
+01 is already running. Only02's generated notebook is updated;01 and all training
+modules/configs are left unchanged. A stdlib observer is embedded in02 around the
+existing launcher command, retaining the exact runtime source pin and preserving
+checkpoint/selection identity. It incrementally reads the same console logs,
+labels GPU/job/metric source, prints actual epoch loss/train_acc, per-task and
+aggregate evaluation accuracy/forgetting, timing and final AA/AIA. Existing values
+on resume are labeled previous log; incomplete log lines are buffered and
+truncated/replaced logs are handled. Observer failures only emit warnings and
+never terminate or mutate training. A latest-metrics JSON snapshot is saved.
+
+Validation is evaluated only at the existing tuning task boundaries on the10%
+training holdout. Main02 uses the full training set, so its official evaluation
+accuracy is labeled test_acc, not a new validation metric. No new evaluation
+calls, per-epoch held-out checks, early stopping or tuning criterion are added.
+The currently active01 cannot gain a new display without replacing its launcher;
+it should continue uninterrupted. Both stages retain existing epoch/task resume.
