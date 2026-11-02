@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 from .io import atomic_torch
+from .storage import artifact_path, sha256_file, require_space, tensor_bytes
 import torch
 from .math import factor_values
 
@@ -32,7 +33,7 @@ class _StreamQuadratic(torch.autograd.Function):
                 with torch.enable_grad():
                     d = {k: (lookup[block + ':' + k].detach() - v.to(device)).requires_grad_()
                          for k, v in state.anchor[block].items()}
-                    stored = torch.load(Path(state.storage_dir) / record['file'], map_location='cpu') if 'file' in record else record['factors']
+                    stored = torch.load(state.factor_path(record), map_location='cpu') if 'file' in record else record['factors']
                     f = {k: v.to(device) for k, v in stored.items()}
                     v = sum(factor_values(d, f, record['A'].to(device)).values()) * record['weight']
                     derivatives = torch.autograd.grad(v, tuple(d.values()))
@@ -58,6 +59,14 @@ class OnlineGL:
         self.strength, self.mu, self.gamma = strength, mu, gamma
         self.history, self.anchor, self.anchor_A = {}, {}, {}
         self.storage_dir = str(storage_dir) if storage_dir is not None else None
+        self._resolved_files = {}
+
+    def factor_path(self, record):
+        filename = record['file']
+        if filename not in self._resolved_files:
+            self._resolved_files[filename] = artifact_path(
+                Path(self.storage_dir).parent, Path('curvature') / filename, record.get('sha256'))
+        return self._resolved_files[filename]
 
     def penalty(self, model):
         # Strict zero bypass: no tensor op, RNG draw, hook, or modified optimizer.
@@ -71,6 +80,9 @@ class OnlineGL:
         return .5 * self.strength * _StreamQuadratic.apply(self, names, parameters[0].device, *parameters)
 
     def consolidate(self, model, statistics):
+        if self.storage_dir is not None:
+            # Check the WHOLE incoming task before writing its first block.
+            require_space(Path(self.storage_dir) / 'task-statistics.pt', tensor_bytes(statistics))
         for history in self.history.values():
             for record in history:
                 record['weight'] *= self.gamma
@@ -79,7 +91,8 @@ class OnlineGL:
             if self.storage_dir is not None:
                 filename = hashlib.sha256(name.encode()).hexdigest()[:16] + f'_{len(self.history.get(name, [])):02d}.pt'
                 atomic_torch(statistics[name], Path(self.storage_dir) / filename)
-                record.update(file=filename, floats=sum(v.numel() for v in statistics[name].values()))
+                record.update(file=filename, floats=sum(v.numel() for v in statistics[name].values()),
+                              sha256=sha256_file(Path(self.storage_dir) / filename))
             else:
                 record['factors'] = statistics[name]
             self.history.setdefault(name, []).append(record)
@@ -87,10 +100,11 @@ class OnlineGL:
             self.anchor_A[name] = -m.A_log.detach().cpu().exp()
 
     def state_dict(self):
-        return vars(self).copy()
+        return {k: v for k, v in vars(self).items() if not k.startswith('_')}
 
     def load_state_dict(self, state):
         self.__dict__.update(state)
+        self._resolved_files = {}
 
     def floats(self):
         def count(x):

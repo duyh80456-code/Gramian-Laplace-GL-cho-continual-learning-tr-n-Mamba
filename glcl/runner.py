@@ -10,12 +10,17 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
 import time
 import numpy as np
 import torch
 from .io import ROOT, atomic_json, atomic_torch, digest_sources, require_tests
-from .regularizer import OnlineGL, preserve_rng
+from .regularizer import OnlineGL, preserve_rng, mixers
+from .checkpoint import (cpu_tree, model_snapshot, load_model, write_context, load_context,
+                         prune_contexts, encode_cache, decode_cache)
+from .storage import (StoragePause, compatible_identity, compatible_source, require_space,
+                      tensor_bytes, artifact_path)
 
 
 def load_official(runtime):
@@ -60,7 +65,7 @@ def restore_rng(s):
 
 def pack_cache(gvm, model):
     lookup = {id(p): n for n, p in model.named_parameters()}
-    result = deepcopy(gvm.cache_dict)
+    result = cpu_tree(gvm.cache_dict)
     for key in ('null_param_id_dict', 'update_proj_dict', 'interm_tensor_dict'):
         if key in result:
             result[key] = {lookup[pid]: value for pid, value in result[key].items()}
@@ -69,7 +74,7 @@ def pack_cache(gvm, model):
 
 def unpack_cache(cache, model):
     parameters = dict(model.named_parameters())
-    result = deepcopy(cache)
+    result = {k: v for k, v in cache.items()}
     for key in ('null_param_id_dict', 'update_proj_dict', 'interm_tensor_dict'):
         if key in result:
             result[key] = {id(parameters[n]): value for n, value in result[key].items()}
@@ -90,6 +95,11 @@ class Runtime:
         self.gl = OnlineGL(args.strength, config['mu'], config['gamma'], storage_dir=self.out / 'curvature')
         self.resume = None
         self.restored = False
+        self.context_file = None
+        self.context_sha256 = None
+        self._encoded_cache = None
+        self._committed_context = None
+        self._committed_factors = set()
         self.valid_paths = set()
         self.identity = dict(source_sha256=digest_sources(), config=config, arm=args.arm,
                              stage=args.stage, strength=args.strength, seed=0,
@@ -97,11 +107,27 @@ class Runtime:
                              pretrained_sha256=self.file_hash(args.pretrained))
         if (self.out / 'latest.pt').exists():
             self.resume = torch.load(self.out / 'latest.pt', map_location='cpu')
-            if self.resume['identity'] != self.identity:
+            if not compatible_identity(self.resume['identity'], self.identity):
                 raise RuntimeError('Resume identity mismatch (source, config, arm, data, or checkpoint weights)')
             self.elapsed = self.resume['elapsed']
+            if self.resume.get('context_file'):
+                self.context_file = self.resume['context_file']
+                self.context_sha256 = self.resume['context_sha256']
+                context = load_context(self.out, self.context_file, self.context_sha256)
+                self.resume.update(cache=decode_cache(context['cache']), gl=context['gl'])
             self.gl.load_state_dict(self.resume['gl'])
             self.gl.storage_dir = str(self.out / 'curvature')
+            if self.resume['identity']['source_sha256'] != self.identity['source_sha256']:
+                atomic_json(dict(previous=self.resume['identity']['source_sha256'],
+                                 current=self.identity['source_sha256'],
+                                 change='audited storage/checkpoint migration; training protocol unchanged'),
+                            self.out / 'storage_migration.json')
+            # Finished files from an interrupted, uncommitted statistics/context
+            # pass are scratch data, never dependencies of latest.pt.
+            self._committed_context = self.context_file
+            self._committed_factors = {record['file'] for history in self.gl.history.values()
+                                      for record in history if 'file' in record}
+            self.prune_uncommitted()
         atomic_json(self.identity, self.out / 'identity.json')
 
     @staticmethod
@@ -133,6 +159,7 @@ class Runtime:
     def train_epoch(self, gvm, epoch, loader, model, criterion, optimizer):
         if self.resume and not self.resume['task_complete'] and gvm.cl_mngr.current_taskid == self.resume['task'] and epoch <= self.resume['epoch']:
             return 'restored epoch'
+        self.check_next_checkpoint(gvm, model, optimizer)
         if self.config['microbatch'] >= self.config['batch_size']:
             return self.original_epoch(gvm, epoch, loader, model, criterion, optimizer)
         # Preserve upstream effective minibatches and one ModAdam step per batch.
@@ -166,16 +193,70 @@ class Runtime:
             scheduler.load_state_dict(self.resume['scheduler'])
             restore_rng(self.resume['rng'])
             self.restored = True
+            self.resume.pop('optimizer', None)
+            self.resume.pop('scheduler', None)
+
+    def check_next_checkpoint(self, gvm, model, optimizer):
+        planned = dict(model=model_snapshot(model, gvm.args.training_string, cpu=False),
+                       optimizer=optimizer.state_dict(), params=gvm.param_dict)
+        incoming = tensor_bytes(planned)
+        if not optimizer.state:
+            incoming += 2 * sum(p.numel()*p.element_size() for group in optimizer.param_groups for p in group['params'])
+        if self.context_file is None:
+            if self._encoded_cache is None:
+                self._encoded_cache = encode_cache(pack_cache(gvm, model))
+            incoming += tensor_bytes(dict(cache=self._encoded_cache, gl=self.gl.state_dict()))
+        require_space(self.out / 'latest.pt', incoming)
+
+    def check_task_storage(self, gvm, model):
+        floats = 0
+        for mixer in mixers(model).values():
+            D, n, r = mixer.intermediate_size, mixer.ssm_state_size, mixer.time_step_rank
+            H = mixer.out_proj.out_features
+            floats += 3*D*D + 2*n*n + D*n*n + D*r*r + D + r*r + 3 + H*H
+        trained = tensor_bytes(model_snapshot(model, gvm.args.training_string, cpu=False))
+        if self._encoded_cache is None:
+            self._encoded_cache = encode_cache(pack_cache(gvm, model))
+        context = tensor_bytes(dict(cache=self._encoded_cache, gl=self.gl.state_dict()))
+        # New precision, refreshed anchor/context, and a completed-task adapter.
+        require_space(self.out / 'task-end-statistics.pt', 4*floats + context + 2*trained)
+
+    def prune_uncommitted(self):
+        prune_contexts(self.out, self._committed_context)
+        for path in (self.out / 'curvature').glob('*.pt'):
+            if re.fullmatch(r'[0-9a-f]{16}_\d+\.pt', path.name) and path.name not in self._committed_factors:
+                path.unlink()
 
     def save(self, gvm, task, epoch, model, optimizer=None, scheduler=None, complete=False):
+        if self.context_file is None:
+            if self._encoded_cache is None:
+                self._encoded_cache = encode_cache(pack_cache(gvm, model))
+            self.context_file, self.context_sha256 = write_context(
+                self.out, dict(cache=self._encoded_cache, gl=self.gl.state_dict()))
+            self._encoded_cache = None
         state = dict(identity=self.identity, task=task, epoch=epoch, task_complete=complete,
-                     model={n: v.detach().cpu() for n, v in model.state_dict().items()},
-                     cache=pack_cache(gvm, model), params=gvm.param_dict, labels=gvm.label_map_g2l,
-                     accuracy=gvm.acc_mat_dict, gl=self.gl.state_dict(), rng=rng_state(),
+                     model=model_snapshot(model, gvm.args.training_string),
+                     model_format='trainable_plus_buffers_v1',
+                     context_file=self.context_file, context_sha256=self.context_sha256,
+                     params=gvm.param_dict, labels=gvm.label_map_g2l,
+                     accuracy=gvm.acc_mat_dict, rng=rng_state(),
                      elapsed=self.elapsed + time.monotonic() - self.started,
                      optimizer=optimizer.state_dict() if optimizer is not None else None,
                      scheduler=scheduler.state_dict() if scheduler is not None else None)
         atomic_torch(state, self.out / 'latest.pt')
+        self._committed_context = self.context_file
+        self._committed_factors = {record['file'] for history in self.gl.history.values()
+                                  for record in history if 'file' in record}
+        prune_contexts(self.out, self.context_file)
+        dependencies = [dict(path=str(self.out.relative_to(self.out.parent.parent) / self.context_file), sha256=self.context_sha256)]
+        for history in self.gl.history.values():
+            for record in history:
+                if 'file' in record:
+                    dependencies.append(dict(path=str(self.out.relative_to(self.out.parent.parent) / 'curvature' / record['file']),
+                                             sha256=record.get('sha256')))
+        atomic_json(dict(required_artifacts=dependencies,
+                         instruction='Keep earlier Output shards containing these immutable artifacts attached on resume'),
+                    self.out / 'resume_dependencies.json')
         atomic_json(dict(task=task + 1, epoch=epoch, task_complete=complete,
                          elapsed_seconds=state['elapsed'], statistics_floats=self.gl.floats()), self.out / 'progress.json')
 
@@ -186,7 +267,8 @@ class Runtime:
         self.deadline()
 
     def deadline(self):
-        if time.time() >= float(os.environ.get('GL_DEADLINE', 'inf')):
+        if (time.time() >= float(os.environ.get('GL_DEADLINE', 'inf'))
+                or (self.out.parent.parent / '.pause_requested').exists()):
             print('PAUSED at checkpoint; rerun identical notebook with previous Output', flush=True)
             raise SystemExit(75)
 
@@ -240,10 +322,16 @@ class Runtime:
         if self.resume:
             outdim = self.resume['model']['head.weight'].shape[0]
             model.head = torch.nn.Linear(model.head.in_features, outdim, model.head.bias is not None).cuda()
-            model.load_state_dict(self.resume['model'], strict=True)
+            load_model(model, self.resume['model'], args.training_string, self.resume.get('model_format'))
             gvm.cache_dict = unpack_cache(self.resume['cache'], model)
             gvm.param_dict, gvm.label_map_g2l = self.resume['params'], self.resume['labels']
             gvm.acc_mat_dict = self.resume['accuracy']
+            # A completed-task checkpoint must restore RNG BEFORE initializing
+            # the next task's head/loader, too (not only in optimizer restore).
+            restore_rng(self.resume['rng'])
+            self.resume.pop('model', None)
+            self.resume.pop('cache', None)
+            self.resume.pop('gl', None)
         stop_task = 3 if self.args.stage == 'tune' else 10
         for task, classes in gvm.cl_mngr:
             if task >= stop_task:
@@ -255,7 +343,12 @@ class Runtime:
             if not (self.resume and task == self.resume['task'] and not self.resume['task_complete']):
                 gvm.update_label_maps(task, classes)
             model = official.train_one_task(gvm, task, classes, model)
+            # The official end-task projector/cache and GL anchor change here;
+            # persist a new immutable context before committing task completion.
+            self.context_file = None
+            self._encoded_cache = None
             if self.args.arm != 'MambaCL' and self.args.strength != 0:
+                self.check_task_storage(gvm, model)
                 from .statistics import collect
                 dataset = official.define_dataset(gvm, classes, training=True, transform_type=args.transform_type,
                                                    target_map_to_local=True, use_eval_transform=True, expand_times=1)
@@ -301,7 +394,7 @@ def main():
         if not a.selection:
             p.error('Main GL arms require --selection from validation tuning')
         selection = json.loads(Path(a.selection).read_text())
-        if selection['source_sha256'] != digest_sources():
+        if not compatible_source(selection['source_sha256']):
             raise RuntimeError('Selection belongs to different source')
         a.strength = selection['selected'][a.arm]
     runtime = Runtime(a, cfg)
@@ -309,7 +402,18 @@ def main():
         for key in ('dataset_manifest', 'pretrained_sha256'):
             if selection[key] != runtime.identity[key]:
                 raise RuntimeError('Selection mismatch: ' + key)
-    runtime.run()
+    try:
+        runtime.run()
+    except StoragePause:
+        try:
+            runtime.prune_uncommitted()
+        except OSError as error:
+            print('Could not remove uncommitted scratch artifacts:', str(error), flush=True)
+        raise
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except StoragePause as error:
+        print('STORAGE PAUSED:', str(error), flush=True)
+        raise SystemExit(75)

@@ -42,8 +42,13 @@ WORKING.mkdir(parents=True, exist_ok=True)
 os.chdir(WORKING)
 REPO = Path('/kaggle/working/gramian-laplace')
 RUN_ROOT = Path('/kaggle/working/glcl')
+EPHEMERAL = Path('/kaggle/temp/glcl')
+os.environ.update(GL_EPHEMERAL_ROOT=str(EPHEMERAL), UV_CACHE_DIR=str(EPHEMERAL/'cache/uv'),
+                  PIP_CACHE_DIR=str(EPHEMERAL/'cache/pip'))
 OUTPUT = RUN_ROOT / 'glcl_outputs'
 ROOT_OUT = OUTPUT
+subprocess.run([sys.executable, '-c', STORAGE_PREFLIGHT, '--working', str(RUN_ROOT),
+                '--ephemeral', str(EPHEMERAL), '--repo', str(REPO)], cwd=WORKING, check=True)
 
 def atomic_json(value, path):
     path = Path(path)
@@ -79,10 +84,12 @@ os.chdir(REPO)
 print('Resolved code commit:', CODE_COMMIT, 'pin:', REPO_COMMIT)
 print('Official MambaCL:', json.loads((REPO/'upstream/LOCK.json').read_text()))
 '''
+setup = 'STORAGE_PREFLIGHT = ' + repr((ROOT/'scripts/prepare_storage.py').read_text()) + '\n' + setup
+
 install = '''
 # Isolated Python 3.11 + official torch 2.2.2; no Kaggle host torch replacement.
 subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'uv==0.5.31'], check=True)
-VENV = Path('/kaggle/working/glcl_env')
+VENV = EPHEMERAL/'env'
 if not (VENV/'bin/python').exists():
     subprocess.run([sys.executable, '-m', 'uv', 'venv', '--python', '3.11', str(VENV)], check=True)
 PYTHON = str(VENV/'bin/python')
@@ -116,7 +123,7 @@ sessions.append(dict(timestamp=datetime.now(timezone.utc).isoformat(), pin=REPO_
 atomic_json(sessions, commit_path)
 DATA_REPORT = OUTPUT/'data_preparation.json'
 prepare = [PYTHON, 'scripts/prepare_imagenet_r.py', '--input', str(DATA_ROOT or '/kaggle/input'),
-           '--stage', str(RUN_ROOT/'input_data'/'imagenet_r'), '--report', str(DATA_REPORT), '--download-official']
+           '--stage', str(EPHEMERAL/'input_data'/'imagenet_r'), '--report', str(DATA_REPORT), '--download-official']
 subprocess.run(prepare, env=ENV, check=True)
 prepared = json.loads(DATA_REPORT.read_text())
 if prepared['status'] != 'PASSED':
@@ -148,7 +155,8 @@ report = '''
 for path in (OUTPUT/'selection.json', OUTPUT/'session.json', OUTPUT/'comparison.csv', OUTPUT/'comparison.md'):
     if path.exists():
         print(path.name, path.read_text())
-print('Archive: /kaggle/working/glcl/glcl_outputs.tar.gz; attach it as previous Output to resume.')
+print('Save this notebook Output. Attach its glcl_outputs tree to resume; no tar backup is required.')
+print('If resume_dependencies.json names earlier Output shards, keep those versions attached too.')
 '''
 core_install, kernel_install = install.split('# Install official CUDA wheels', 1)
 core_install += "\nENV = dict(os.environ, PYTHONPATH=str(REPO), OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', PYTHONUNBUFFERED='1', TQDM_DISABLE='1')\n"
@@ -185,16 +193,15 @@ import time
 SESSION_START = time.time()
 """
     stage_launch = launch
-    if stage == 'main':
+    if stage in ('tune', 'main'):
         observer = (ROOT/'scripts/live_performance.py').read_text()
-        # Embed a read-only observer in02, keeping the runtime source commit
-        # exactly equal to the already running01 and preserving resume identity.
+        # Embed the same read-only observer in both stage notebooks.
         stage_launch = ('PERFORMANCE_OBSERVER = ' + repr(observer) + '\n'
                         + 'PERFORMANCE_OBSERVER_SHA256 = ' + repr(hashlib.sha256(observer.encode()).hexdigest()) + '\n' + launch)
         stage_launch = stage_launch.replace(
             'result = subprocess.run(command, env=ENV)',
             "observer = [PYTHON, '-u', '-c', PERFORMANCE_OBSERVER, '--root', str(OUTPUT), '--jobs', str(jobs_path), '--', *command]\nresult = subprocess.run(observer, env=ENV)")
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
         cells += [cell('code', restore), cell('code', kernel_install), cell('code', stage_launch), cell('code', report)]

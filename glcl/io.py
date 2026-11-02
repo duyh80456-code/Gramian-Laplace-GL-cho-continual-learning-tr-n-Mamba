@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import errno
 from pathlib import Path
 import torch
 
@@ -11,16 +12,36 @@ def atomic_json(value, path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def atomic_torch(value, path):
+    from .storage import StoragePause, disk_writer, require_space, tensor_bytes
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + '.tmp')
-    torch.save(value, tmp)
-    os.replace(tmp, path)
+    with disk_writer(path):
+        # A previous failed attempt is never a resume checkpoint.
+        tmp.unlink(missing_ok=True)
+        require_space(path, tensor_bytes(value))
+        try:
+            with tmp.open('wb') as stream:
+                torch.save(value, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, path)
+        except (OSError, RuntimeError) as error:
+            if (isinstance(error, OSError) and error.errno == errno.ENOSPC
+                    or any(s in str(error).lower() for s in ('file write failed', 'failed writing', 'unexpected pos'))):
+                raise StoragePause('Checkpoint write failed; previous committed file retained: '
+                                   + str(path) + '. ' + str(error)) from error
+            raise
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def digest_sources():

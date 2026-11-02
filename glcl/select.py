@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 from .io import atomic_json, digest_sources
+from .storage import compatible_source
 
 
 def main():
@@ -18,7 +19,7 @@ def main():
             run = Path(args.root) / f'{arm}_lambda{strength:g}'
             summary = json.loads((run / 'summary.json').read_text())
             identity = json.loads((run / 'identity.json').read_text())
-            if not (identity['source_sha256'] == digest_sources() and summary['arm'] == arm and summary['seed'] == 0 and summary['stage'] == 'tune' and summary['strength'] == strength and len(summary['accuracy_matrix']) == 3):
+            if not (compatible_source(identity['source_sha256']) and summary['arm'] == arm and summary['seed'] == 0 and summary['stage'] == 'tune' and summary['strength'] == strength and len(summary['accuracy_matrix']) == 3):
                 raise RuntimeError('Incomplete or mismatched tuning run: ' + str(run))
             identities.append(identity)
             scores[arm][strength] = summary['AIA']

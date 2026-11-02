@@ -295,3 +295,49 @@ accuracy is labeled test_acc, not a new validation metric. No new evaluation
 calls, per-epoch held-out checks, early stopping or tuning criterion are added.
 The currently active01 cannot gain a new display without replacing its launcher;
 it should continue uninterrupted. Both stages retain existing epoch/task resume.
+
+
+### Storage repair after both epoch2 checkpoint writes failed
+
+The user reported ENOSPC during archive creation, then PyTorch file-write and
+unexpected-position errors for both lanes. Full frozen backbones, repeated
+static caches, periodic tar copies and failed temporary files competed for disk.
+No training horizon, GL formula, precision, baseline parameter set, task split
+or lambda-selection criterion is changed by this repair.
+
+Epoch checkpoints now contain the configured training parameter patterns and all
+buffers; frozen weights are reconstructed from the SHA256-checked original
+pretrained checkpoint. Immutable task contexts hold cached heads/projectors and
+GL state once per task. Large CPU square matrices use upper-triangle bits plus
+lower-XOR residual and lossless zlib byte-plane compression; all asymmetric bits
+are retained. Restoring optimizer/model on a tiny CPU model gives bitwise equal
+next-update weights. Completed-task RNG is restored before next-head creation.
+
+Periodic tar copies are disabled by default. Environment and data cache move to
+/kaggle/temp/glcl outside saved Output, without assuming a separate physical
+disk. The original downloaded tar is removed only after all30000 extracted
+required images pass coverage checks. Valid checkpoints and archives are never
+removed by the bootstrap scratch cleanup; a newer complete .tmp checkpoint is
+CRC checked and promoted. Cleanup refuses active GL worker/launcher processes.
+
+Cross-process serialized writes check actual disk plus a16GiB Output ceiling
+and1GiB reserve. Failed writes remove their partial temporary files and preserve
+the previous checkpoint; capacity exhaustion exits75. Restored immutable blobs
+are read from prior Input shards with SHA verification when recorded. Users must
+retain all shards listed in resume_dependencies.json. The exact old source
+SHA256 ddf74bae8905a19b6d4a83ac0fba297407a8815fbfa197814ff5498923afa07a
+is accepted solely for this audited storage migration; all other identity fields
+remain exact. Renamed standalone old checkpoint downloads are recognized too.
+Both notebooks now embed the read-only metrics observer, since the old run failed.
+
+Validation: registered section-six CPU checks PASS, InfSSM still DEFERRED;
+CPU-only storage tests verify compact and legacy model loading, exact next Adam
+update, immutable context reuse, Input-only factor resolution, renamed checkpoint
+discovery, RNG roundtrip, lossless asymmetric/NaN/signed-zero bit packing, disk and
+Output-budget pause, and failed checkpoint/archive cleanup retaining old files.
+Bootstrap checks validate complete temporary-checkpoint recovery and actual small
+venv relocation. Local test subprocesses lowered the free-space reserve to16MiB
+because this machine itself has little free disk; production remains1GiB. No
+CUDA/full Mamba/end-to-end benchmark run was executed locally. The downloaded
+old startup archive contained epoch0, not the later epoch1 state; recovery of the
+user's epoch1 requires their actual valid latest.pt or newer saved Output.

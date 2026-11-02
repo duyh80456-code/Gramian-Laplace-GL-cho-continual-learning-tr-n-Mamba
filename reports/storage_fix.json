@@ -1,0 +1,27 @@
+{
+  "scope": "CPU storage fixtures and fault injection only; no CUDA or full Mamba run",
+  "status": "PASS",
+  "checks": [
+    "compact model plus optimizer exact next update",
+    "legacy approved-source checkpoint migration",
+    "immutable task context reuse",
+    "Input-only immutable factor/context restore",
+    "standalone renamed checkpoint discovery",
+    "RNG roundtrip",
+    "lossless square-cache IEEE-bit preservation",
+    "physical disk guard",
+    "saved-Output budget guard",
+    "failed checkpoint write retains old file and cleans partial",
+    "complete temporary checkpoint CRC recovery",
+    "venv and data-cache relocation",
+    "failed optional archive retains old file and cleans partial"
+  ],
+  "commands": [
+    "GL_MIN_FREE_BYTES=16777216 python3 -m tests.storage_resume",
+    "GL_MIN_FREE_BYTES=16777216 python3 -m tests.storage_bootstrap",
+    "python3 -m tests.section6"
+  ],
+  "production_min_free_bytes": 1073741824,
+  "production_output_budget_bytes": 17179869184,
+  "note": "Only test processes lower the reserve because the local test disk has less than1GiB free. Training quality, T4 memory and throughput remain unverified."
+}

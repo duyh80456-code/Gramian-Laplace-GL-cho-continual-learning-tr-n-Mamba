@@ -344,6 +344,10 @@ def prepare(search_root, destination, report, allow_download=False):
         raise ValueError('Staged output must be separate from source image directories')
     print('Preparing exact official train/val symlinks from:', str(source), flush=True)
     stage(source, resolved, splits, classes, sources=found)
+    archive_cache = cache / 'imagenet-r.tar'
+    if archive_cache.is_file():
+        archive_cache.unlink()
+        print('Removed redundant downloaded tar after exact split verification; original images retained.', flush=True)
     result = dict(status='PASSED', source=str(source), input_layout=kind,
                   archive_origin=origin, search_root=str(search_root),
                   download_metadata=json.loads((cache / 'download.json').read_text())

@@ -64,7 +64,7 @@ No source ZIP or code overlay is attached to Kaggle.
    registered horizon. Existing local checkpoints take precedence over an
    older attached archive.
 6. After01 is COMPLETE, import `notebooks/02_main_s0.ipynb` and attach01's
-   Output containing `glcl_outputs.tar.gz` and selection.json, plus the same
+   Output containing the `glcl_outputs` tree and selection.json, plus the same
    dataset/weights. Enable the same secret and T4 x2. GPU0 runs MambaCL then
    hybrid; GPU1 runs GL. Stop after these seed0 stage-one runs.
 
@@ -72,9 +72,10 @@ Both01 and02 use the SAME source commit and run tag. Only their stage and job
 queues differ. Previous Output carries results/checkpoints and validation
 selection; source always comes from GitHub. Atomic code_commit.json and stage
 protocol manifests record the actual checkout and queues. Heartbeat every30s,
-backup every5min,11h session deadline with checkpoint resume, as in H4.
-Outputs are under `/kaggle/working/glcl/glcl_outputs`; the resume archive is
-`/kaggle/working/glcl/glcl_outputs.tar.gz`.
+storage report every5min and an11h session deadline with checkpoint resume.
+Outputs are under `/kaggle/working/glcl/glcl_outputs`. No periodic tar copy is
+created by default; Kaggle saves the Output tree directly. Optional CLI --archive
+retains legacy archive support, with a capacity check and failed-write cleanup.
 
 To regenerate notebooks for a committed source revision already pushed to origin:
 
@@ -94,12 +95,12 @@ execution has not been performed locally.
 - `glcl/runner.py`: pinned official pipeline, loss insertion, accumulation/resume.
 - `glcl/diagnostics.py`: measurement-only GL/KFAC/EWC/input-proxy comparisons.
 - `glcl/select.py`: validation-only lambda selection with identity checks.
-- `glcl/kaggle.py`: two-lane launcher, checkpoint archives and deadline handling.
+- `glcl/kaggle.py`: two-lane launcher, direct Output restore and deadline handling.
 - `scripts/install_cuda_extensions.py`: official wheel selection and binary-only
   installation, preserving Torch/dependencies and saving full install diagnostics.
 - `scripts/prepare_imagenet_r.py`: full Input filename search, safe archive
   extraction, original-dataset download fallback and exact official split staging;
-  preparation provenance is included in the Output archive.
+  preparation provenance is included in Output metadata.
 - `PREREGISTRATION.md`: claims and selection rules registered before training.
 
 ## Live metrics and resume
@@ -109,20 +110,61 @@ scheduler, RNG, stored heads/projectors and GL state. Attach the previous Output
 and rerun the same stage. An interrupted epoch is repeated from its latest
 checkpoint; the registered task/epoch horizon is preserved.
 
-02 now follows existing console logs and prints loss/train_acc after each epoch,
-per-task test_acc, aggregate seen-class test_acc and forgetting after task
-evaluation, plus final AA/AIA and timing. The JSON snapshot is
-`glcl_outputs/performance_latest.json`. This observer does not import the model,
-call evaluation, change RNG or alter the training source/checkpoint identity.
-The observer is embedded in02, with its SHA256 recorded in the notebook protocol.
-01's notebook and its currently running job are unchanged. Its validation accuracy
-is evaluated on the10% training holdout at task boundaries and recorded in its
-console.log. 02's official evaluation data is labeled test_acc, not val_acc;
-there is no separate held-out validation set in the full-data main run.
+Both01 and02 follow existing console logs and print epoch loss/train_acc,
+per-task evaluation accuracy/forgetting, final AA/AIA and timing. The snapshot is
+`glcl_outputs/performance_latest.json`. Tuning validation accuracy uses the10%
+training holdout and is evaluated at task boundaries. Main02 reports test_acc;
+there is no extra validation set or per-epoch validation call.
 
-The runtime pin remains the same in01/02 for this logging-only update. Do not
-interrupt an active01 just to update its display. A running launcher does not
-acquire notebook UI changes automatically.
+### Storage repair and old checkpoints
+
+The reported PytorchStreamWriter failures follow a prior ENOSPC archive error.
+The notebooks now retain only trainable parameter patterns plus all model buffers
+in each epoch checkpoint. Frozen parameters are reconstructed from the same
+SHA256-checked pretrained weights. Optimizer, scheduler, RNG, stored heads,
+labels and metrics remain checkpointed. Task caches/GL anchors live in a separate
+immutable context reused across epochs. Large square caches use lossless bit
+packing: upper triangle plus XOR residual for the lower triangle, byte shuffled
+and compressed. Asymmetric rounding, signed zeros and NaN payloads are retained;
+there is no precision reduction or change to the training formulas.
+
+Environment/download caches and staged images use `/kaggle/temp/glcl`, outside
+saved Output. This location may share the physical disk: moving files avoids
+Output quota use, but does not promise additional physical capacity. The redundant
+downloaded ImageNet-R tar is removed only after all original images are verified.
+
+Before refreshing the source checkout, a stdlib-only preflight removes generated
+failed `.pt.tmp`/`.json.tmp` and partial archive files. A complete newer temporary
+checkpoint is promoted only after ZIP CRC validation; existing latest.pt and
+valid old archives are retained. It refuses cleanup while an old GL worker or
+launcher is active. Stop the failed run before running the new notebook.
+
+Writes share a cross-process lock. Capacity guards preserve1GiB free disk and a
+conservative16GiB saved-Output payload ceiling. Insufficient capacity pauses with
+exit75, retaining the last committed checkpoint. The failed write is cleaned up.
+Save that Output, attach it in a fresh session, then rerun the same notebook.
+Immutable contexts/curvature remain on attached Inputs rather than being copied
+into every new Output. Keep **all earlier Output shards named by each run's
+resume_dependencies.json** attached; a later shard need not be self-contained.
+
+The exact pre-fix source digest is explicitly allowed for migration; config,
+arm, strength, seed, dataset manifest and pretrained hash must still match.
+The new notebooks restore the highest task/epoch from direct Output trees or
+standalone downloaded `.pt` checkpoints (even renamed). Same-session local valid
+checkpoints take precedence. Legacy single tar archives remain supported, but
+only contain the state at their own backup time. Epoch2 cannot be recovered from
+an incomplete epoch2 write; a valid epoch1 latest.pt resumes after epoch1.
+A startup-only archive resumes from epoch0. Completed-task resume also restores
+RNG before initializing the next head.
+
+Reproduce storage-only checks on a CPU machine with sufficient disk:
+
+```bash
+python3 -m tests.storage_resume
+python3 -m tests.storage_bootstrap
+```
+
+These exercise a tiny model and fault injection, not full Mamba training.
 
 ## Interpretation and remaining validation
 

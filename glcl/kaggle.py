@@ -8,30 +8,48 @@ import sys
 import tarfile
 import threading
 import time
+import shutil
 from .io import atomic_json
+from .storage import (StoragePause, compatible_source, disk_writer, require_space,
+                      restore_direct)
 
 
 def archive(root, destination):
     root, destination = Path(root), Path(destination)
     tmp = destination.with_suffix('.tmp')
-    with tarfile.open(tmp, 'w:gz', compresslevel=1) as tar:
-        for p in sorted(root.rglob('*')):
-            if p.is_file() and not p.name.endswith('.tmp'):
-                tar.add(p, arcname=str(Path(root.name) / p.relative_to(root)), recursive=False)
-    os.replace(tmp, destination)
+    with disk_writer(root / 'archive-reservation'):
+        tmp.unlink(missing_ok=True)
+        files = [p for p in sorted(root.rglob('*')) if p.is_file() and not p.name.endswith('.tmp')
+                 and not p.name.startswith('.')]
+        require_space(destination, sum(p.stat().st_size for p in files))
+        try:
+            with tarfile.open(tmp, 'w:gz', compresslevel=1) as tar:
+                for p in files:
+                    tar.add(p, arcname=str(Path(root.name) / p.relative_to(root)), recursive=False)
+            os.replace(tmp, destination)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def restore(inputs, working):
     """One explicit archive avoids accidentally merging incompatible histories."""
     inputs, working = Path(inputs), Path(working)
-    choices = list(inputs.rglob('glcl_outputs.tar.gz'))
+    if restore_direct(inputs, working):
+        return
+    choices, visited = [], set()
+    for directory, dirs, files in os.walk(inputs, followlinks=True):
+        path = Path(directory)
+        real = path.resolve()
+        if real in visited:
+            dirs[:] = []
+            continue
+        visited.add(real)
+        if 'glcl_outputs.tar.gz' in files:
+            choices.append(path / 'glcl_outputs.tar.gz')
     if not choices:
         return
     if len(choices) != 1:
         raise RuntimeError('Attach exactly one previous Output archive')
-    if any(working.rglob('latest.pt')):
-        print('Existing local checkpoints retained; restore skipped', flush=True)
-        return
     with tarfile.open(choices[0]) as tar:
         for member in tar.getmembers():
             path = Path(member.name)
@@ -39,20 +57,48 @@ def restore(inputs, working):
                 raise ValueError('Unsafe archive member')
             if path.parts[0] != 'glcl_outputs':
                 raise ValueError('Unexpected archive root')
-        tar.extractall(working.parent)
+        # Expand legacy archives outside Output. Their static blobs are indexed
+        # there and reused; only latest model/optimizer state is restored below.
+        import hashlib
+        tag = hashlib.sha256((str(choices[0]) + str(choices[0].stat().st_size)).encode()).hexdigest()[:16]
+        cache = Path(os.environ.get('GL_EPHEMERAL_ROOT', '/kaggle/temp/glcl')) / 'legacy_resume' / tag
+        cache.mkdir(parents=True, exist_ok=True)
+        marker = cache / '.complete'
+        incoming = sum(m.size for m in tar.getmembers() if m.isfile() and not m.name.endswith('.tmp')
+                       and not ((cache/m.name).is_file() and (cache/m.name).stat().st_size == m.size))
+        require_space(cache / 'unpack', incoming)
+        for member in tar.getmembers():
+            if not member.isfile() or member.name.endswith('.tmp'):
+                continue
+            target = cache / member.name
+            if marker.is_file() and target.is_file():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tar.extractfile(member) as source, target.open('wb') as destination:
+                shutil.copyfileobj(source, destination, 1024**2)
+        marker.touch()
+    restore_direct(cache, working)
 
 
-def run_lanes(jobs, root, data, pretrained, deadline, selection=None):
+def run_lanes(jobs, root, data, pretrained, deadline, selection=None, make_archive=False):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     stop = threading.Event()
     lock = threading.Lock()
     archive_errors = []
     lanes = {}
+    pause_marker = root / '.pause_requested'
+    pause_marker.unlink(missing_ok=True)
     archive_path = root.parent / 'glcl_outputs.tar.gz'
     def backup():
+        if not make_archive:
+            return
         with lock:
-            archive(root, archive_path)
+            try:
+                archive(root, archive_path)
+            except Exception as exc:
+                archive_errors.append(repr(exc))
+                print('OPTIONAL ARCHIVE SKIPPED:', repr(exc), flush=True)
     def heartbeat():
         while not stop.wait(30):
             print('GPU lanes:', json.dumps(lanes), flush=True)
@@ -60,6 +106,7 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None):
                 print(str(p.relative_to(root)), p.read_text().strip(), flush=True)
     def periodic():
         while not stop.wait(300):
+            print('Storage: direct Output checkpoints; free GiB:', round(shutil.disk_usage(root).free/1024**3, 2), flush=True)
             try:
                 backup()
             except Exception as exc:
@@ -70,11 +117,10 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None):
             target = root / job['stage'] / job['name']
             if (target / 'summary.json').exists():
                 identity = json.loads((target / 'identity.json').read_text())
-                from .io import digest_sources
-                if identity['source_sha256'] != digest_sources():
+                if not compatible_source(identity['source_sha256']):
                     raise ValueError('Completed output uses another source revision')
                 continue
-            if time.time() >= deadline:
+            if time.time() >= deadline or pause_marker.exists():
                 return 75
             target.mkdir(parents=True, exist_ok=True)
             cmd = [sys.executable, '-m', 'glcl.runner', '--arm', job['arm'], '--stage', job['stage'],
@@ -105,6 +151,7 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None):
             backup()
             lanes[index] = dict(job=job['name'], returncode=process.returncode)
             if process.returncode == 75:
+                atomic_json(dict(job=job['name'], reason='One lane paused; finish current epoch and keep Output'), pause_marker)
                 return 75
             if process.returncode != 0:
                 raise RuntimeError(f'{job["name"]} failed ({process.returncode}); read {log_path}')
@@ -118,8 +165,16 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None):
             futures = [executor.submit(lane, i) for i in range(2)]
             statuses = [f.result() for f in futures]
         atomic_json(dict(status='PAUSED' if 75 in statuses else 'COMPLETE', lanes=statuses,
-                         archive_errors=archive_errors), root / 'session.json')
+                         archive_errors=archive_errors, backup_mode='optional_archive' if make_archive else 'direct_output'), root / 'session.json')
         return statuses
+    except BaseException as error:
+        try:
+            atomic_json(dict(status='FAILED', lanes=lanes, error=str(error),
+                             backup_mode='optional_archive' if make_archive else 'direct_output'),
+                        root / 'session.json')
+        except OSError as status_error:
+            print('Could not save failure status:', str(status_error), flush=True)
+        raise
     finally:
         stop.set()
         for thread in threads:
@@ -136,6 +191,7 @@ def main():
     p.add_argument('--pretrained', required=True)
     p.add_argument('--deadline', type=float, required=True)
     p.add_argument('--jobs', help='Two explicit GPU queues exported by the notebook JOBS cell')
+    p.add_argument('--archive', action='store_true', help='Optional full archive only if enough spare disk; direct Output is the default')
     args = p.parse_args()
     from .io import ROOT, require_tests
     require_tests()
@@ -166,11 +222,15 @@ def main():
         if requested != jobs:
             p.error('Notebook JOBS differ from the registered phase-one schedule')
         jobs = requested
-    statuses = run_lanes(jobs, args.root, args.data, args.pretrained, args.deadline, selection)
+    statuses = run_lanes(jobs, args.root, args.data, args.pretrained, args.deadline, selection, args.archive)
     if args.stage == 'tune' and statuses == [0, 0]:
         subprocess.run([sys.executable, '-m', 'glcl.select', '--root', str(Path(args.root) / 'tune'), '--out', str(selection)], check=True)
     subprocess.run([sys.executable, str(ROOT / 'scripts/collect_results.py'), args.root], check=True)
-    archive(Path(args.root), Path(args.root).parent / 'glcl_outputs.tar.gz')
+    if args.archive:
+        try:
+            archive(Path(args.root), Path(args.root).parent / 'glcl_outputs.tar.gz')
+        except StoragePause as error:
+            print('OPTIONAL ARCHIVE SKIPPED:', str(error), flush=True)
     raise SystemExit(75 if 75 in statuses else 0)
 
 if __name__ == '__main__':
