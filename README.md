@@ -34,10 +34,15 @@ No source ZIP or code overlay is attached to Kaggle.
 
 1. Import `notebooks/01_tune_s0.ipynb` into Kaggle. Enable Internet and grant
    this notebook access to your existing `github_token` secret. Select T4 x2.
-2. Attach ImageNet-R as `train/<class>/...` and `val/<class>/...`, using the
-   official split files in `upstream/mamba-cl/tools`. Attach the official
-   `defocus_mamba_large_cls_21k.pth` weights. DATA_ROOT/PRETRAINED can be set
-   explicitly in the first configuration cell; otherwise they are discovered.
+2. Attach raw ImageNet-R, such as Kaggle dataset `my1nonly/imagenet-r`, plus
+   the official `defocus_mamba_large_cls_21k.pth` weights. The notebook discovers
+   the raw class directory and builds train/val symlinks in the writable working
+   directory using the pinned official Mamba-CL lists:24000 train,6000 val,
+   200 classes each. Every required filename is checked before staging; there
+   is no random resplit, image copy or modification of Kaggle Inputs. An already
+   prepared split is accepted only if its file membership matches those lists.
+   DATA_ROOT may point to a raw root or a split root; leave it None for discovery.
+   Set PRETRAINED explicitly only if checkpoint auto-discovery is ambiguous.
 3. Run All. Source clone, isolated dependencies, registered CPU checks and
    import/GPU checks precede training. The first configuration cell exposes
    REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.
@@ -79,6 +84,8 @@ execution has not been performed locally.
 - `glcl/diagnostics.py`: measurement-only GL/KFAC/EWC/input-proxy comparisons.
 - `glcl/select.py`: validation-only lambda selection with identity checks.
 - `glcl/kaggle.py`: two-lane launcher, checkpoint archives and deadline handling.
+- `scripts/prepare_imagenet_r.py`: raw-input discovery, official split staging
+  and filename validation; preparation report is included in the Output archive.
 - `PREREGISTRATION.md`: claims and selection rules registered before training.
 
 ## Interpretation and remaining validation

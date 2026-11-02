@@ -109,13 +109,14 @@ commit_path = OUTPUT/'code_commit.json'
 sessions = json.loads(commit_path.read_text()) if commit_path.exists() else []
 sessions.append(dict(timestamp=datetime.now(timezone.utc).isoformat(), pin=REPO_COMMIT, commit=CODE_COMMIT, stage=STAGE))
 atomic_json(sessions, commit_path)
-if DATA_ROOT is None:
-    candidates = [p.parent for p in Path('/kaggle/input').rglob('train')
-                  if p.is_dir() and (p.parent/'val').is_dir()
-                  and len([x for x in p.iterdir() if x.is_dir()]) == 200]
-    if len(candidates) != 1:
-        raise RuntimeError('Set DATA_ROOT to one ImageNet-R train/val root; use official split files')
-    DATA_ROOT = str(candidates[0])
+DATA_REPORT = OUTPUT/'data_preparation.json'
+prepare = [PYTHON, 'scripts/prepare_imagenet_r.py', '--input', str(DATA_ROOT or '/kaggle/input'),
+           '--stage', str(RUN_ROOT/'input_data'/'imagenet_r'), '--report', str(DATA_REPORT)]
+subprocess.run(prepare, env=ENV, check=True)
+prepared = json.loads(DATA_REPORT.read_text())
+if prepared['status'] != 'PASSED':
+    raise RuntimeError('ImageNet-R preparation failed; training blocked')
+DATA_ROOT = prepared['data_dir']
 if PRETRAINED is None:
     candidates = list(Path('/kaggle/input').rglob('defocus_mamba_large_cls_21k.pth'))
     if len(candidates) != 1:
@@ -168,16 +169,16 @@ for name, stage, title, description in [
 REPO_COMMIT = {pin!r}
 RUN_TAG = {'glcl_imagenetr_s0_' + pin[:12]!r}
 STAGE = {stage!r}
-DATA_ROOT = None  # optional explicit ImageNet-R root under /kaggle/input
+DATA_ROOT = None  # optional raw OR official train/val root; auto-discovered under /kaggle/input
 PRETRAINED = None  # optional explicit path to defocus_mamba_large_cls_21k.pth
 JOBS = {jobs!r}
 import time
 SESSION_START = time.time()
 """
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach ImageNet-R with the official train/val split and official pretrained weights. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach raw ImageNet-R (for example my1nonly/imagenet-r) and official pretrained weights. The notebook creates train/val symlinks using the pinned Mamba-CL lists, checks all24000/6000 files and200 classes, and also accepts an existing official split. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
-        cells += [cell('code', kernel_install), cell('code', restore), cell('code', launch), cell('code', report)]
+        cells += [cell('code', restore), cell('code', kernel_install), cell('code', launch), cell('code', report)]
     notebook = dict(cells=cells, metadata=dict(kernelspec=dict(display_name='Python 3', language='python', name='python3'),
                     language_info=dict(name='python', version='3.11'), kaggle=dict(accelerator='nvidiaTeslaT4', isInternetEnabled=True, language='python', sourceType='notebook')), nbformat=4, nbformat_minor=5)
     path = ROOT/'notebooks'/f'{name}.ipynb'

@@ -157,3 +157,18 @@ the official projector does not protect dt_proj. These are reporting limitations
 - Disk and transfer cost grow with tasks. Approximately tens of GB of exact
   online factor summands per GL arm are possible. This has not been benchmarked;
   spilling limits RAM/VRAM but does not make disk I/O or archive cost negligible.
+
+## Raw ImageNet-R input preparation
+
+The user selected Kaggle dataset my1nonly/imagenet-r and requested automatic
+handling. Both01 and02 discover raw class trees below /kaggle/input (or an
+explicit DATA_ROOT), validate all filenames required by the pinned official
+train/val lists, and stage symlinks at /kaggle/working/glcl/input_data/imagenet_r.
+The split is exactly24000/6000 images and200 classes, with no overlap and no
+random resplit. Kaggle Inputs are never modified; no images are copied. An
+existing split must match the official file membership exactly. Missing files,
+extra split files, or ambiguous source roots stop before training. Staging is
+idempotent, and stale staging symlinks can be reattached to the current mount.
+The preparation report, source root and official split hashes are archived with
+results, but staged images/symlinks stay outside glcl_outputs and its archive.
+This preparation does not decode images or run the training model.
