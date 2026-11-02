@@ -201,3 +201,43 @@ refresh still preserves outputs, staged inputs and the isolated environment.
 The runtime source pin is unchanged by this bootstrap-only fix. A local Git
 reproduction checks recovery from a deleted cwd and two consecutive executions,
 with a preserved output marker and no model or network execution.
+
+### Full Input search and renamed Kaggle files
+
+The user reported all30000 official names missing and requested full automatic
+Input search. Rechecking the public Kaggle listing showed names such as
+imagenet-r/n01443537/goldfish_0.jpg, whereas the pinned official lists contain
+n01443537/sketch_3.jpg, art_7.jpg, etc. The first199 listed images have no official
+filename matches. Thus the earlier assertion that this Kaggle copy could be used
+directly with the exact original split was insufficiently verified. A root scan
+cannot recover the missing filename correspondence; no index/sort renaming or
+random resplit is introduced.
+
+Preparation now scans every file below /kaggle/input, follows directory aliases,
+and indexes exact class/filename keys regardless of wrapper/split depth. Identical
+aliases are deduplicated; conflicting image copies stop with an explicit error.
+If a complete canonical image set is unavailable, original ImageNet-R tar/ZIP
+Inputs are inspected and only matching regular image members are extracted. No
+archive paths, symlinks or unrelated members determine extraction destinations.
+If still incomplete, the notebook automatically downloads the author archive at
+https://people.eecs.berkeley.edu/~hendrycks/imagenet-r.tar, linked from the official
+hendrycks/imagenet-r repo. HEAD returned2191079936 bytes; a bounded real archive
+read verified five actual image names against the pinned repo lists. Full2.19GB
+was not downloaded in the local check. The download is atomic, retries failures,
+and records URL/size/computed SHA256; this computed hash is provenance, not a
+publisher-supplied checksum. The exact30000-name coverage and24000/6000 split
+checks remain enforced before training.
+
+Original archives/extracted images are cached under working input_data, excluded
+from checkpoint archives. Reruns reuse a complete cache; a fresh Kaggle session
+can reuse an attached original archive or download again. Input preparation
+reports whether attached files, an attached archive, a local cache or the official
+download supplied the images. Training formulas and benchmark protocol are unchanged.
+
+Verification for this Input-handling revision used a temporary tar containing all
+30000 official class/filename keys with one-byte placeholder contents, a renamed
+Kaggle-style Input, and a local HTTP-response substitute. Download streaming/hash,
+canonical extraction, exact24000/6000 staging, cache reuse and whole-Input lookup
+through nested symlinks passed. These are filesystem/preparation checks, not an
+image-decoding or model-training run. The real author's archive was separately
+checked by HTTP HEAD and a bounded read of five actual image headers.

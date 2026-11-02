@@ -34,18 +34,21 @@ No source ZIP or code overlay is attached to Kaggle.
 
 1. Import `notebooks/01_tune_s0.ipynb` into Kaggle. Enable Internet and grant
    this notebook access to your existing `github_token` secret. Select T4 x2.
-2. Attach raw ImageNet-R, such as Kaggle dataset `my1nonly/imagenet-r`, plus
-   the official `defocus_mamba_large_cls_21k.pth` weights. The notebook discovers
-   the raw class directory and builds train/val symlinks in the writable working
-   directory using the pinned official Mamba-CL lists:24000 train,6000 val,
-   200 classes each. Every required filename is checked before staging; there
-   is no random resplit, image copy or modification of Kaggle Inputs. An already
-   prepared split is accepted only if its file membership matches those lists.
-   DATA_ROOT may point to a raw root or a split root; leave it None for discovery.
-   Set PRETRAINED explicitly only if checkpoint auto-discovery is ambiguous.
-   Discovery follows Kaggle directory symlinks, deduplicates aliases and avoids
-   cycles. Failure to find a source prints mount diagnostics; missing images are
-   reported separately instead of being hidden as an unrecognized layout.
+2. Attach the official `defocus_mamba_large_cls_21k.pth` weights. Dataset input
+   is optional: the notebook searches ALL files under /kaggle/input for the exact
+   official class/filenames, including nested and symlinked mounts. It can combine
+   official images across attached folders, or extract an attached original
+   `imagenet-r.tar`/ZIP. Missing/renamed filenames trigger automatic download of
+   the author's original archive (about2.19GB) with Internet ON. It then stages
+   exactly24000/6000 train/val symlinks and checks200 classes and zero overlap.
+   The Kaggle copy `my1nonly/imagenet-r` uses renamed files such as goldfish_0.jpg;
+   those cannot be matched to the repo's rendition-based split without a verified
+   mapping. The notebook never guesses by file order or makes a random split.
+   Downloaded archives and extracted original images are cached outside Output;
+   a fresh Kaggle session may download them again unless the original archive or
+   unchanged original images are attached. Renamed Input images are left untouched.
+   Leave DATA_ROOT=None for a full Input scan; set it only to restrict the search.
+   PRETRAINED is also found automatically through directory symlinks.
 3. Run All. Source clone, isolated dependencies, registered CPU checks and
    import/GPU checks precede training. The first configuration cell exposes
    REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.
@@ -89,8 +92,9 @@ execution has not been performed locally.
 - `glcl/diagnostics.py`: measurement-only GL/KFAC/EWC/input-proxy comparisons.
 - `glcl/select.py`: validation-only lambda selection with identity checks.
 - `glcl/kaggle.py`: two-lane launcher, checkpoint archives and deadline handling.
-- `scripts/prepare_imagenet_r.py`: raw-input discovery, official split staging
-  and filename validation; preparation report is included in the Output archive.
+- `scripts/prepare_imagenet_r.py`: full Input filename search, safe archive
+  extraction, original-dataset download fallback and exact official split staging;
+  preparation provenance is included in the Output archive.
 - `PREREGISTRATION.md`: claims and selection rules registered before training.
 
 ## Interpretation and remaining validation

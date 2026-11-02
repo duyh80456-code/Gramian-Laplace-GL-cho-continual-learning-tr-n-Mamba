@@ -116,7 +116,7 @@ sessions.append(dict(timestamp=datetime.now(timezone.utc).isoformat(), pin=REPO_
 atomic_json(sessions, commit_path)
 DATA_REPORT = OUTPUT/'data_preparation.json'
 prepare = [PYTHON, 'scripts/prepare_imagenet_r.py', '--input', str(DATA_ROOT or '/kaggle/input'),
-           '--stage', str(RUN_ROOT/'input_data'/'imagenet_r'), '--report', str(DATA_REPORT)]
+           '--stage', str(RUN_ROOT/'input_data'/'imagenet_r'), '--report', str(DATA_REPORT), '--download-official']
 subprocess.run(prepare, env=ENV, check=True)
 prepared = json.loads(DATA_REPORT.read_text())
 if prepared['status'] != 'PASSED':
@@ -179,7 +179,7 @@ JOBS = {jobs!r}
 import time
 SESSION_START = time.time()
 """
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach raw ImageNet-R (for example my1nonly/imagenet-r) and official pretrained weights. The notebook creates train/val symlinks using the pinned Mamba-CL lists, checks all24000/6000 files and200 classes, and also accepts an existing official split. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
         cells += [cell('code', restore), cell('code', kernel_install), cell('code', launch), cell('code', report)]
