@@ -9,8 +9,8 @@ import pickletools
 import shutil
 import zipfile
 
-# FP32 SSM changes numerical policy; earlier AMP-v2 checkpoints are separate.
-LEGACY_SOURCES = set()
+# Audited v3 source: only diagnostic display changes; all identity fields stay exact.
+LEGACY_SOURCES = {'656c7e853ee7a625498d3336579fe690f7900ea3e64e62137020e3a27e84a380'}
 
 
 class StoragePause(RuntimeError):

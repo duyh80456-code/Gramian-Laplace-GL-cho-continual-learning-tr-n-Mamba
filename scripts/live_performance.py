@@ -33,10 +33,22 @@ def metric_event(line, stage):
         return 'WARNING', {}, line
     if line.startswith('STEP_METRICS '):
         raw = json.loads(line[len('STEP_METRICS '):])
-        fields={key:raw[key] for key in ('task','epoch','optimizer_step','loss','train_acc') if key in raw}
+        full=os.environ.get('GL_METRICS_DETAIL','full')=='full'
+        fields=raw if full else {key:raw[key] for key in ('task','epoch','optimizer_step','loss','train_acc') if key in raw}
         text=f"Task [{fields.get('task')}] Epoch [{fields.get('epoch')}] Step [{fields.get('optimizer_step')}]"
         if fields.get('loss') is not None:text+=f" loss={fields['loss']:.4f}"
         if fields.get('train_acc') is not None:text+=f" train_acc={fields['train_acc']:.2f}%"
+        if full:
+            for key,label,scale,unit in (
+                ('seconds_per_step','s/step',1,''),('images_per_second','images/s',1,''),
+                ('dataloader_wait_seconds_per_step','loader_wait',1,'s'),
+                ('dataloader_wait_fraction','loader_wait',100,'%'),
+                ('vram_peak_allocated_GiB','VRAM_peak_alloc',1,'GiB'),
+                ('vram_peak_reserved_GiB','VRAM_peak_reserved',1,'GiB'),
+                ('gpu_utilization_percent','GPU_util',1,'%')):
+                if key in fields:
+                    number=fields[key]
+                    text+=f" {label}={number*scale:.2f}{unit}" if isinstance(number,(int,float)) else f" {label}=N/A"
         return 'TRAIN_STEP', fields, text
     score = 'val_acc' if stage == 'tune' else 'test_acc'
     task = re.search(r'Task \[\s*(\d+)\s*/\s*(\d+)\s*\]', line)
@@ -49,10 +61,15 @@ def metric_event(line, stage):
     if 'Results of task [' in line:
         fields.update(task=int(re.search(r'Results of task \[(\d+)\]', line)[1]))
         fields[score] = value(line, 'class_inc_last_acc', True)
-        return 'VALIDATION' if stage == 'tune' else 'TEST', fields, f"Task [{fields['task']}] {score}={fields[score]:.2f}%"
+        fields['forgetting']=value(line,'class_inc_last_forg',True)
+        return 'VALIDATION' if stage == 'tune' else 'TEST', fields, line.replace('class_inc_last_acc=',score+'=').replace('class_inc_last_forg=','forgetting=')
     if ':: Eval [' in line:
         fields[score + '_task'] = value(line, 'acc_class_inc', True)
-        return 'EVAL_TASK', fields, f"{score}_task={fields[score + '_task']:.2f}%"
+        return 'EVAL_TASK', fields, line.replace('acc_class_inc=',score+'_task=')
+    if 'Training time =' in line or 'Time so far:' in line:
+        return 'TIME',fields,line
+    if 'GL statistics ' in line or 'Diagnostics ' in line:
+        return 'STATISTICS',fields,line
     if line.startswith('Traceback') or re.match(r'^[\w.]*(?:Error|Exception):', line):
         return 'ERROR', {}, line
     return None
@@ -118,7 +135,7 @@ class MetricFollower:
             if summary.is_file() and not state['summary_seen']:
                 measured = json.loads(summary.read_text())
                 score = 'val_acc' if state['stage'] == 'tune' else 'test_acc'
-                fields = {score: measured.get('AA')}
+                fields = {score: measured.get('AA'),'AIA':measured.get('AIA'),'forgetting':measured.get('forgetting'),'gpu_hours':measured.get('gpu_hours')}
                 self.emit(state, ('COMPLETE', fields, json.dumps(fields)), historical=state['summary_history'])
                 state['summary_seen'] = True
                 changed = True
@@ -140,7 +157,7 @@ def main():
     if not command:
         parser.error('Provide the unchanged launcher command after --')
     follower = MetricFollower(args.root, json.loads(Path(args.jobs).read_text()))
-    print('Live metrics: loss/train_acc every5 steps and each epoch; val_acc/test_acc after each task. '
+    print('Live metrics every5 steps: loss/train_acc, speed, loader wait, peak VRAM and GPU utilization; val_acc/test_acc after each task. '
           'Clock shows observer elapsed time. Existing log values are labeled previous log.', flush=True)
     stop = threading.Event()
     def watch():

@@ -104,7 +104,7 @@ class StepMeter:
         if self.step % 5 == 0:
             util=self.utilization.drain() if self.utilization else None
             event['gpu_utilization_percent']=util if util is None or math.isfinite(util) else None
-            displayed={key:event[key] for key in ('task','epoch','optimizer_step','loss','train_acc')}
+            displayed=event if os.environ.get('GL_METRICS_DETAIL','full')=='full' else {key:event[key] for key in ('task','epoch','optimizer_step','loss','train_acc')}
             print('STEP_METRICS ' + json.dumps(dict(arm=self.arm, **displayed)), flush=True)
             self.window = []
         try:

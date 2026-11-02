@@ -28,16 +28,20 @@ with tempfile.TemporaryDirectory() as temporary:
     assert parsed[0] == 'TRAIN_STEP' and parsed[1]['loss'] == .5
     assert parsed[1]['train_acc'] == 75.
     for field in ('images_per_second','dataloader_wait_fraction','vram_peak_allocated_bytes','gpu_utilization_percent'):
-        assert field not in parsed[1] and field not in parsed[2] and field not in output.getvalue()
+        assert field in parsed[1] and field in output.getvalue()
     assert 'loss=0.5000' in parsed[2] and 'train_acc=75.00%' in parsed[2]
-    # Diagnostic files retain detailed measurements without printing them.
+    assert 'images/s=20.00' in parsed[2] and 'GPU_util=N/A' in parsed[2]
+    # Diagnostic files retain the same detailed measurements.
     assert progress['images_per_second'] == 20 and progress['dataloader_wait_fraction'] == .2
     assert progress['vram_peak_allocated_bytes'] == 100
     legacy=metric_event('STEP_METRICS '+json.dumps(dict(task=1,epoch=1,optimizer_step=5,loss=.4,images_per_second=99,vram_peak_allocated_bytes=200)), 'tune')
-    assert 'images_per_second' not in legacy[1] and 'vram' not in legacy[2]
-    assert metric_event('Task [1/10]:: Training time = 2h','tune') is None
+    assert legacy[1]['images_per_second']==99 and 'images/s=99.00' in legacy[2]
+    with patch.dict(os.environ,GL_METRICS_DETAIL='compact'):
+        compact=metric_event(lines[0],'tune')
+        assert 'images_per_second' not in compact[1] and 'images/s' not in compact[2]
+    assert metric_event('Task [1/10]:: Training time = 2h','tune')[0]=='TIME'
     validation=metric_event(':: ** Results of task [1]: class_inc_last_acc=80.00% class_inc_last_forg=3.00%','tune')
-    assert validation[2]=='Task [1] val_acc=80.00%' and 'forgetting' not in validation[1]
+    assert 'val_acc=80.00%' in validation[2] and validation[1]['forgetting']==3.
     assert meter.summary()['optimizer_steps'] == 20
     assert meter.summary()['images_per_second'] == 20
     with patch('glcl.telemetry.shutil.disk_usage') as disk:

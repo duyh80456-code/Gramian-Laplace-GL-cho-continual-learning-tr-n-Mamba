@@ -1,0 +1,37 @@
+{
+  "status": "CPU_CHECKS_PASS",
+  "scientific_change": false,
+  "default_metrics_detail": "full",
+  "step_interval": 5,
+  "visible_metrics": [
+    "loss",
+    "train_acc",
+    "seconds_per_step",
+    "images_per_second",
+    "dataloader_wait_seconds_per_step",
+    "dataloader_wait_fraction",
+    "vram_peak_allocated_GiB",
+    "vram_peak_reserved_GiB",
+    "gpu_utilization_percent"
+  ],
+  "other_output": [
+    "20-update per-backbone probe summary",
+    "task-end accuracy/forgetting/timing",
+    "final AA/AIA/time",
+    "disk and GPU-lane heartbeat"
+  ],
+  "unchanged": [
+    "SSM fp32 island under AMP",
+    "finite-value guards",
+    "20 actual-update gate",
+    "training config/data/optimizer/scaler"
+  ],
+  "checks": [
+    "full and compact log parser formatting",
+    "detailed progress fields retained",
+    "finite gate and instrumented tiny loop",
+    "numerical safety regression",
+    "checkpoint/storage restore regression"
+  ],
+  "gpu_status": "PENDING_KAGGLE_MEASUREMENT"
+}

@@ -86,7 +86,13 @@ def main():
                 print('Less than2GiB reserved-memory headroom; trying smaller microbatch.',flush=True);continue
             measured.update(microbatch=microbatch,use_checkpoint=checkpointing,headroom_bytes=headroom)
             atomic_json(measured,report)
-            print('Benchmark gate:',measured['status'],'(full report saved to benchmark.json)',flush=True)
+            summary={key:measured.get(key) for key in ('status','optimizer_steps','optimizer_attempts','amp_skipped_updates',
+                'seconds_per_step','images_per_second','dataloader_wait_seconds','dataloader_wait_fraction','numerical_status')}
+            summary.update(backbone=measured.get('identity',{}).get('config',{}).get('backbone','large'),microbatch=microbatch,
+                effective_batch=measured.get('effective_batch'),amp='fp16',ssm_dtype='fp32',
+                use_checkpoint=checkpointing,vram_peak_allocated_GiB=measured.get('vram_peak_allocated_bytes',0)/1024**3,
+                vram_peak_reserved_GiB=measured['vram_peak_reserved_bytes']/1024**3,headroom_GiB=headroom/1024**3)
+            print('BENCHMARK SUMMARY:',json.dumps(summary),flush=True)
             if measured['status']!='PASS':
                 print('PAUSED: below10 images/s; inspect loader wait before continuing.',flush=True)
                 raise SystemExit(75)

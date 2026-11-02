@@ -531,3 +531,22 @@ under outer CPU autocast with gradients, invalid-forward failure before an updat
 and parent numerical-failure handling without a profile. Tiny optimizer-loop,
 storage/backbone isolation and registered math checks remain CPU-only. Actual
 base weights with native CUDA kernels and T4 throughput still require Kaggle.
+
+
+### Restore full diagnostic display for backbone comparison
+
+The user reversed the loss/accuracy-only display request. All notebooks now
+explicitly select METRICS_DETAIL=full. Each5-step report includes loss/train_acc,
+seconds/step, actual images/sec, exposed dataloader wait, peak allocated/reserved
+VRAM and sampled GPU utilization. Probe summaries include actual20-update speed,
+loader wait, memory/headroom and numerical status; disk/GPU-lane heartbeats are
+printed again. Task-end forgetting/timing and final accuracy/AA/AIA/time are
+visible alongside validation/test accuracy. Missing GPU-util samples remain N/A,
+not invented zeros. Detailed JSON reports are retained.
+
+This change affects display only. FP32 SSM islands, finite-value guards, AMP,
+profile selection, optimizer/scaler behavior, schedules and data are unchanged.
+The exact v3 source digest656c7e853ee7a625498d3336579fe690f7900ea3e64e62137020e3a27e84a380
+is audited as compatible for same-protocol resume; all other identity fields
+must still match. Restoring full display does not claim actual throughput for
+any backbone before it is measured on Kaggle.

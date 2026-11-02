@@ -119,6 +119,9 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None, make_archi
             try:
                 status = disk_status(working)
                 atomic_json(dict(path=str(working),lanes=dict(lanes),**status),root/'heartbeat.json')
+                if os.environ.get('GL_METRICS_DETAIL','full')=='full':
+                    print('DISK working_used_GiB='+str(round(status['working_used_bytes']/1024**3,2))+' free_GiB='+str(round(status['free_bytes']/1024**3,2)),flush=True)
+                    print('GPU lanes:',json.dumps(lanes),flush=True)
                 check_free(working)
             except StoragePause as error:
                 atomic_json(dict(reason=str(error)), pause_marker)

@@ -63,10 +63,14 @@ sampled-label statistics/Gramian/diagnostics also run in fp32. Model master weig
 remain fp32. The original evaluator receives --use_amp=True. Scaler state is
 checkpointed with optimizer/scheduler/RNG and restored before further updates.
 
-Every5 optimizer attempts the notebook prints only loss (running mean CE) and
-train_acc (running epoch top1 percentage). Resource/timing diagnostics remain in
-progress.json/benchmark.json but are not printed; heartbeat.json records disk
-usage silently. Task boundaries print val_acc in01 and test_acc in02. progress.json updates after every batch;
+Every5 optimizer attempts the notebook prints loss (running mean CE), train_acc,
+seconds/step, images/second, dataloader wait seconds/fraction, peak allocated and
+reserved VRAM, and sampled GPU utilization (N/A if unavailable). Task boundaries
+print val_acc in01 or test_acc in02 and forgetting; final summaries include AA/AIA
+and elapsed GPU-hours proxy. Benchmark summaries print speed, loader wait and
+VRAM/headroom so backbones can be assessed on the actual GPU. The first config
+cell explicitly sets METRICS_DETAIL=full. heartbeat.json and console heartbeat
+show disk usage and active GPU lanes; numerical checks and fp32 SSM are unchanged. progress.json updates after every batch;
 this is live progress, not a step checkpoint. The actual resume point remains the
 last committed epoch. Config/args/AMP/persistent-workers/checkpoint setting are
 recorded in each run's effective_config.json.
