@@ -54,7 +54,9 @@ def main():
             # Tee directly to notebook output while retaining the OOM diagnostic.
             with (attempt/'console.log').open('w') as log:
                 child=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
-                for line in child.stdout:print(line,end='',flush=True);log.write(line);log.flush()
+                for line in child.stdout:
+                    log.write(line);log.flush()
+                    if not line.startswith('BENCHMARK_RESULT '):print(line,end='',flush=True)
                 code=child.wait()
             text=(attempt/'console.log').read_text()
             attempts.append(dict(microbatch=microbatch,use_checkpoint=checkpointing,returncode=code))
@@ -68,7 +70,7 @@ def main():
                 print('Less than2GiB reserved-memory headroom; trying smaller microbatch.',flush=True);continue
             measured.update(microbatch=microbatch,use_checkpoint=checkpointing,headroom_bytes=headroom)
             atomic_json(measured,report)
-            print('BENCHMARK SUMMARY:',json.dumps(measured),flush=True)
+            print('Benchmark gate:',measured['status'],'(full report saved to benchmark.json)',flush=True)
             if measured['status']!='PASS':
                 print('PAUSED: below10 images/s; inspect loader wait before continuing.',flush=True)
                 raise SystemExit(75)

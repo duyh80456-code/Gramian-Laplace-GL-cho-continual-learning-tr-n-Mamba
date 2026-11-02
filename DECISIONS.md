@@ -469,3 +469,23 @@ filename lookup, checkpoint-header backbone detection and cross-backbone restore
 isolation, alongside the registered section-six checks. No full base model or
 CUDA checkpoint load/throughput measurement was run locally; the notebook probe
 performs the actual T4 fit and speed check before tuning.
+
+
+### User-requested loss/accuracy-only display
+
+All training notebooks now display running epoch CE loss and train_acc every5
+optimizer attempts and at epoch end. Validation/test accuracy remains evaluated
+at the existing task boundaries. The observer suppresses timing, VRAM, loader
+wait, GPU utilization, forgetting and statistics-progress lines; final display
+shows evaluation accuracy. Existing detailed JSON files and the mandatory20-update
+fit/speed gate remain intact. Disk heartbeat is saved silently to heartbeat.json,
+with PAUSED/errors still visible. Benchmark detailed summaries stay in files
+instead of being dumped to notebook output. No evaluation call, optimization,
+precision, data pipeline, schedule, parameter set or RNG operation is changed.
+
+This display-only migration explicitly accepts the prior AMP large97d4f2f and
+base90d7f98 source digests; all config/data/pretrained/arm identity fields still
+must match. Old fp32/different-horizon checkpoints remain incompatible. A running
+launcher does not acquire these display changes until the notebook is updated.
+The supplied log shows data preparation PASSED but a missing exact base
+classification checkpoint in Input; it is not evidence of a training failure.

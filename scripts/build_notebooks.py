@@ -185,7 +185,8 @@ print('PAUSED: attach this Output and rerun same notebook' if result.returncode 
 report = '''
 for path in (OUTPUT/'selection.json', OUTPUT/'session.json', OUTPUT/'comparison.csv', OUTPUT/'comparison.md'):
     if path.exists():
-        print(path.name, path.read_text())
+        if path.name in ('selection.json','session.json'):print(path.name, path.read_text())
+        else:print('Saved results:',path)
 print('Save this notebook Output. Attach its glcl_outputs tree to resume; no tar backup is required.')
 print('If resume_dependencies.json names earlier Output shards, keep those versions attached too.')
 '''
@@ -210,7 +211,7 @@ for name, stage, title, description in [
     if args.stage and stage not in args.stage:
         continue
     if stage == 'main':
-        description += ' Live output includes epoch loss/train_acc and task-end test_acc/forgetting; final AA/AIA are printed when each arm completes. The observer only reads logs; training and resume are unchanged.'
+        description += ' Live output shows loss/train_acc and task-end test_acc. The observer only reads logs; training and resume are unchanged.'
     if stage == 'tune':
         jobs = [[dict(name=f'{arm}_lambda{strength:g}', arm=arm, strength=strength, stage=stage)
                  for strength in (.1, 1., 10.)] for arm in ('GL', 'MambaCL+GL')]
@@ -240,7 +241,7 @@ SESSION_START = time.time()
         stage_launch = stage_launch.replace(
             'result = subprocess.run(command, env=ENV)',
             "observer = [PYTHON, '-u', '-c', PERFORMANCE_OBSERVER, '--root', str(OUTPUT), '--jobs', str(jobs_path), '--', *command]\nresult = subprocess.run(observer, env=ENV)")
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nEvery5 optimizer steps, live output shows throughput, peak VRAM, loss, GPU utilization and exposed dataloader wait. progress.json updates each step; resume still uses the last committed epoch. Heartbeats show /kaggle/working usage and request PAUSED below2GiB free. Before01 launches either lane, an isolated20-step MambaCL probe on GPU0 must reach10 images/s; slower results stop for review. CPU checks pass; actual GPU throughput remains to be measured on Kaggle.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nEvery5 optimizer steps, live output shows only loss and train_acc; val_acc/test_acc is shown at task boundaries. progress.json updates each step; resume still uses the last committed epoch. Disk heartbeats are saved to heartbeat.json and request PAUSED below2GiB free. Before01 launches either lane, an isolated20-step MambaCL probe on GPU0 must reach10 images/s; slower results stop for review. CPU checks pass; actual GPU throughput remains to be measured on Kaggle.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
         cells += [cell('code', restore), cell('code', kernel_install)]

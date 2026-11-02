@@ -62,9 +62,10 @@ statistics/Gramian/diagnostics run outside autocast in fp32. Model master weight
 remain fp32. The original evaluator receives --use_amp=True. Scaler state is
 checkpointed with optimizer/scheduler/RNG and restored before further updates.
 
-Every5 optimizer attempts the notebook prints loss (running mean CE), seconds/step,
-images/second, exposed dataloader wait, peak allocated/reserved VRAM and sampled
-GPU utilization (null when unavailable). progress.json updates after every batch;
+Every5 optimizer attempts the notebook prints only loss (running mean CE) and
+train_acc (running epoch top1 percentage). Resource/timing diagnostics remain in
+progress.json/benchmark.json but are not printed; heartbeat.json records disk
+usage silently. Task boundaries print val_acc in01 and test_acc in02. progress.json updates after every batch;
 this is live progress, not a step checkpoint. The actual resume point remains the
 last committed epoch. Config/args/AMP/persistent-workers/checkpoint setting are
 recorded in each run's effective_config.json.
@@ -87,7 +88,7 @@ manifest. Attached images and checkpoints are never deleted. /tmp may share a
 physical filesystem; moving files alone does not guarantee free physical space.
 
 There is no periodic tar backup. Optional archive errors are nonfatal. Every30s
-heartbeat reports working-tree bytes/GiB and physical free space. Below2GiB requests
+heartbeat records working-tree bytes/GiB and physical free space in heartbeat.json. Below2GiB requests
 PAUSED at an optimizer boundary, preserving the last epoch checkpoint. Atomic writes
 also reserve2GiB and enforce a16GiB Output payload ceiling. Save Output, attach it
 and all earlier dependency shards, and rerun the same notebook. Non-capacity save I/O failures warn, retain the prior checkpoint and let training

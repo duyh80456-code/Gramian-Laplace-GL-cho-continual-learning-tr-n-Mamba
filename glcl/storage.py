@@ -9,8 +9,11 @@ import pickletools
 import shutil
 import zipfile
 
-# Audited pre-storage-fix source, including the user's 9367998 Kaggle run.
-LEGACY_SOURCES = set()  # AMP/resize/tune10 is a new protocol, not a storage-only migration.
+# Audited AMP large/base revisions: display-only update, identical training configs.
+LEGACY_SOURCES = {
+    'd00597b1628098fe5a1531bd1e7307bc2a2f3434528ec6544ba94432e01eeb5b',
+    '5ae6fff335ab294013099e32db85a7110ea175c4320814b40ab94ddf9f1a50d6',
+}
 
 
 class StoragePause(RuntimeError):

@@ -19,16 +19,25 @@ with tempfile.TemporaryDirectory() as temporary:
     meter = StepMeter(root, 'MambaCL', lambda:dict(allocated=100, reserved=200))
     with redirect_stdout(output):
         for step in range(20):
-            meter.record(0, 1+step//10, 1+step%10, 200, 2., 8.)
+            meter.record(0, 1+step//10, 1+step%10, 200, 2., 8., loss=.5, train_acc=75.)
             progress = json.loads((root/'progress.json').read_text())
             assert progress['optimizer_step'] == step+1
     lines = output.getvalue().splitlines()
     assert len(lines) == 4
     parsed = metric_event(lines[0], 'tune')
-    assert parsed[0] == 'THROUGHPUT' and parsed[1]['images_per_second'] == 20
-    assert parsed[1]['dataloader_wait_fraction'] == .2
-    assert parsed[1]['vram_peak_allocated_bytes'] == 100
-    assert parsed[1]['gpu_utilization_percent'] is None
+    assert parsed[0] == 'TRAIN_STEP' and parsed[1]['loss'] == .5
+    assert parsed[1]['train_acc'] == 75.
+    for field in ('images_per_second','dataloader_wait_fraction','vram_peak_allocated_bytes','gpu_utilization_percent'):
+        assert field not in parsed[1] and field not in parsed[2] and field not in output.getvalue()
+    assert 'loss=0.5000' in parsed[2] and 'train_acc=75.00%' in parsed[2]
+    # Diagnostic files retain detailed measurements without printing them.
+    assert progress['images_per_second'] == 20 and progress['dataloader_wait_fraction'] == .2
+    assert progress['vram_peak_allocated_bytes'] == 100
+    legacy=metric_event('STEP_METRICS '+json.dumps(dict(task=1,epoch=1,optimizer_step=5,loss=.4,images_per_second=99,vram_peak_allocated_bytes=200)), 'tune')
+    assert 'images_per_second' not in legacy[1] and 'vram' not in legacy[2]
+    assert metric_event('Task [1/10]:: Training time = 2h','tune') is None
+    validation=metric_event(':: ** Results of task [1]: class_inc_last_acc=80.00% class_inc_last_forg=3.00%','tune')
+    assert validation[2]=='Task [1] val_acc=80.00%' and 'forgetting' not in validation[1]
     assert meter.summary()['optimizer_steps'] == 20
     assert meter.summary()['images_per_second'] == 20
     with patch('glcl.telemetry.shutil.disk_usage') as disk:

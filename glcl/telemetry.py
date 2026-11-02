@@ -77,7 +77,7 @@ class StepMeter:
         self.total_wait = 0.
         self.window = []
 
-    def record(self, task, epoch, step_in_epoch, images, wait, compute, loss=None):
+    def record(self, task, epoch, step_in_epoch, images, wait, compute, loss=None, train_acc=None):
         self.step += 1
         self.total_images += images
         self.total_seconds += wait + compute
@@ -87,7 +87,7 @@ class StepMeter:
         waiting = sum(w for n,w,c in self.window)
         event = dict(task=task+1, epoch=epoch, task_complete=False,
                      optimizer_step=self.step, step_in_epoch=step_in_epoch,
-                     loss=loss,
+                     loss=loss, train_acc=train_acc,
                      progress_scope='live steps; resume uses latest committed epoch checkpoint',
                      seconds_per_step=seconds/len(self.window),
                      images_per_second=sum(n for n,w,c in self.window)/seconds,
@@ -99,8 +99,8 @@ class StepMeter:
         event['vram_peak_reserved_GiB'] = event['vram_peak_reserved_bytes']/1024**3
         if self.step % 5 == 0:
             event['gpu_utilization_percent'] = self.utilization.drain() if self.utilization else None
-            util = event['gpu_utilization_percent']
-            print('STEP_METRICS ' + json.dumps(dict(arm=self.arm, **event)), flush=True)
+            displayed={key:event[key] for key in ('task','epoch','optimizer_step','loss','train_acc')}
+            print('STEP_METRICS ' + json.dumps(dict(arm=self.arm, **displayed)), flush=True)
             self.window = []
         try:
             atomic_json(event, self.out/'progress.json')

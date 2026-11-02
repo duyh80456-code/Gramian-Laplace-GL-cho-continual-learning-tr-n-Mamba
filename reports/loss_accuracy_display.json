@@ -1,0 +1,38 @@
+{
+  "status": "CPU_CHECKS_PASS",
+  "display": {
+    "train_every_optimizer_attempts": 5,
+    "metrics": [
+      "loss",
+      "train_acc"
+    ],
+    "evaluation": "val_acc for tune; test_acc for main, unchanged task boundaries"
+  },
+  "hidden_from_console": [
+    "throughput",
+    "VRAM",
+    "GPU utilization",
+    "dataloader wait",
+    "timing",
+    "forgetting",
+    "routine disk/progress heartbeat dumps"
+  ],
+  "retained": [
+    "internal diagnostic JSON",
+    "20-update probe/fit/speed gate",
+    "2GiB capacity pause",
+    "warnings and errors",
+    "checkpoint/resume state"
+  ],
+  "checks": [
+    "synthetic and legacy log formatting",
+    "no resource fields leak into step display",
+    "per-step progress still contains diagnostics",
+    "validation formatting",
+    "tiny instrumented loop",
+    "compact checkpoint regression",
+    "base/large restore isolation"
+  ],
+  "gpu_execution": "NOT_RUN",
+  "scientific_change": false
+}

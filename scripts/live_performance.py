@@ -30,8 +30,12 @@ def metric_event(line, stage):
     if line.startswith('CHECKPOINT I/O WARNING:'):
         return 'WARNING', {}, line
     if line.startswith('STEP_METRICS '):
-        fields = json.loads(line[len('STEP_METRICS '):])
-        return 'THROUGHPUT', fields, line
+        raw = json.loads(line[len('STEP_METRICS '):])
+        fields={key:raw[key] for key in ('task','epoch','optimizer_step','loss','train_acc') if key in raw}
+        text=f"Task [{fields.get('task')}] Epoch [{fields.get('epoch')}] Step [{fields.get('optimizer_step')}]"
+        if fields.get('loss') is not None:text+=f" loss={fields['loss']:.4f}"
+        if fields.get('train_acc') is not None:text+=f" train_acc={fields['train_acc']:.2f}%"
+        return 'TRAIN_STEP', fields, text
     score = 'val_acc' if stage == 'tune' else 'test_acc'
     task = re.search(r'Task \[\s*(\d+)\s*/\s*(\d+)\s*\]', line)
     epoch = re.search(r'Epoch \[\s*(\d+)\s*/\s*(\d+)\s*\]', line)
@@ -43,21 +47,10 @@ def metric_event(line, stage):
     if 'Results of task [' in line:
         fields.update(task=int(re.search(r'Results of task \[(\d+)\]', line)[1]))
         fields[score] = value(line, 'class_inc_last_acc', True)
-        fields['forgetting'] = value(line, 'class_inc_last_forg', True)
-        return 'VALIDATION' if stage == 'tune' else 'TEST', fields, line.replace('class_inc_last_acc=', score + '=').replace('class_inc_last_forg=', 'forgetting=')
+        return 'VALIDATION' if stage == 'tune' else 'TEST', fields, f"Task [{fields['task']}] {score}={fields[score]:.2f}%"
     if ':: Eval [' in line:
         fields[score + '_task'] = value(line, 'acc_class_inc', True)
-        return 'EVAL_TASK', fields, line.replace('acc_class_inc=', score + '_task=')
-    if 'Training time =' in line or 'Time so far:' in line:
-        return 'TIME', fields, line
-    if 'GL statistics ' in line:
-        match = re.search(r'GL statistics (\d+)/(\d+)', line)
-        if match and (int(match[1]) % 100 == 0 or match[1] == match[2]):
-            return 'STATISTICS', {}, line
-    if 'Diagnostics ' in line:
-        match = re.search(r'Diagnostics (\d+)/(\d+)', line)
-        if match and (int(match[1]) % 8 == 0 or match[1] == match[2]):
-            return 'DIAGNOSTICS', {}, line
+        return 'EVAL_TASK', fields, f"{score}_task={fields[score + '_task']:.2f}%"
     if line.startswith('Traceback') or re.match(r'^[\w.]*(?:Error|Exception):', line):
         return 'ERROR', {}, line
     return None
@@ -114,7 +107,7 @@ class MetricFollower:
                     latest = {event[0]: (i, event) for i, event in enumerate(events)}
                     events = [event for i, event in sorted(latest.values())]
                     if not events:
-                        print(f"[GPU {state['gpu']} | {state['job']}] Waiting for the first completed epoch; metrics are not available yet.", flush=True)
+                        print(f"[GPU {state['gpu']} | {state['job']}] Waiting for loss/accuracy metrics.", flush=True)
                 for event in events:
                     self.emit(state, event, historical=first and state['has_history'])
                     changed = True
@@ -123,8 +116,7 @@ class MetricFollower:
             if summary.is_file() and not state['summary_seen']:
                 measured = json.loads(summary.read_text())
                 score = 'val_acc' if state['stage'] == 'tune' else 'test_acc'
-                fields = {score: measured.get('AA'), 'AIA': measured.get('AIA'),
-                          'forgetting': measured.get('forgetting'), 'gpu_hours': measured.get('gpu_hours')}
+                fields = {score: measured.get('AA')}
                 self.emit(state, ('COMPLETE', fields, json.dumps(fields)), historical=state['summary_history'])
                 state['summary_seen'] = True
                 changed = True
@@ -146,7 +138,7 @@ def main():
     if not command:
         parser.error('Provide the unchanged launcher command after --')
     follower = MetricFollower(args.root, json.loads(Path(args.jobs).read_text()))
-    print('Live metrics: train loss/accuracy after each epoch; evaluation accuracy/forgetting after each task. '
+    print('Live metrics: loss/train_acc every5 steps and each epoch; val_acc/test_acc after each task. '
           'Clock shows observer elapsed time. Existing log values are labeled previous log.', flush=True)
     stop = threading.Event()
     def watch():

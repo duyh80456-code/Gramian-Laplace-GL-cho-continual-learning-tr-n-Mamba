@@ -118,17 +118,13 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None, make_archi
             working = Path('/kaggle/working') if Path('/kaggle/working').is_dir() else root
             try:
                 status = disk_status(working)
-                print('DISK ' + json.dumps(dict(path=str(working), working_used_GiB=round(status['working_used_bytes']/1024**3, 2), free_GiB=round(status['free_bytes']/1024**3, 2), **status)), flush=True)
+                atomic_json(dict(path=str(working),lanes=dict(lanes),**status),root/'heartbeat.json')
                 check_free(working)
             except StoragePause as error:
                 atomic_json(dict(reason=str(error)), pause_marker)
                 print('STORAGE PAUSED:', str(error), flush=True)
-            print('GPU lanes:', json.dumps(lanes), flush=True)
-            for p in root.rglob('progress.json'):
-                print(str(p.relative_to(root)), p.read_text().strip(), flush=True)
     def periodic():
         while not stop.wait(300):
-            print('Storage: direct Output checkpoints; free GiB:', round(shutil.disk_usage(root).free/1024**3, 2), flush=True)
             try:
                 backup()
             except Exception as exc:

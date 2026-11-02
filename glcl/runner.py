@@ -227,7 +227,7 @@ class Runtime:
             torch.cuda.synchronize()
             compute = time.perf_counter() - compute_start
             step_in_epoch += 1
-            self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute, loss=total_loss/total)
+            self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute, loss=total_loss/total, train_acc=100*total_correct/total)
             if getattr(self.args, 'benchmark_steps', 0) and self.optimizer_updates == self.args.benchmark_steps:
                 result = self.meter.summary()
                 result.update(optimizer_attempts=self.meter.step,optimizer_steps=self.optimizer_updates,
