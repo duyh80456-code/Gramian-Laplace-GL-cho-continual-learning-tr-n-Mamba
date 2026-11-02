@@ -1,0 +1,60 @@
+{
+  "dtype": "float64",
+  "device": "cpu",
+  "results": {
+    "1_C_exactness": {
+      "status": "PASS",
+      "exact_reference": {
+        "max_absolute_error": 1.3322676295501878e-15,
+        "tolerance": 1e-08
+      },
+      "approximation": {
+        "noises": 100,
+        "noise_seed": 19,
+        "spearman": 0.8524332433243322,
+        "minimum": 0.8,
+        "proxy": "Sigma_x tensor I (MambaCL-style input-only)",
+        "proxy_spearman": 0.7255085508550856,
+        "exceeds_proxy": true,
+        "median_relative_error": 0.16420839593502878,
+        "trace_corrected": true
+      }
+    },
+    "2_Q_recursion": {
+      "status": "PASS",
+      "max_error": 1.6653345369377348e-16
+    },
+    "3_up_JVP": {
+      "status": "PASS",
+      "exact_reference": {
+        "max_relative_JVP_error": 7.276064470936935e-16,
+        "tolerance": 1e-06
+      },
+      "approximation": {
+        "noises": 100,
+        "noise_seed": 23,
+        "row": 2,
+        "spearman": 0.968064806480648,
+        "minimum": 0.85,
+        "proxy": "Sigma_u (unweighted input covariance)",
+        "proxy_spearman": 0.9505430543054305,
+        "exceeds_proxy": true,
+        "median_relative_error": 1.7598362870868998,
+        "cross_time_terms": false
+      }
+    },
+    "4_lambda_zero": {
+      "status": "PASS",
+      "bitwise_20_steps": {
+        "Seq": true,
+        "MambaCL": true
+      },
+      "scope": "Tiny CPU model and official ModAdam; no end-to-end training."
+    },
+    "5_InfSSM": {
+      "status": "DEFERRED",
+      "reason": "Phase two: prompt \u00a73 explicitly says not to implement InfSSM before phase-one approval."
+    }
+  },
+  "training_allowed": true
+}
