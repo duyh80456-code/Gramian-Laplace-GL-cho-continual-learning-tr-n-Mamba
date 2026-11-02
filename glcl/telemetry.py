@@ -1,5 +1,6 @@
 """Step timing and non-blocking GPU utilization sampling; no model mutations."""
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -97,8 +98,12 @@ class StepMeter:
                      vram_peak_reserved_bytes=self.memory()['reserved'])
         event['vram_peak_allocated_GiB'] = event['vram_peak_allocated_bytes']/1024**3
         event['vram_peak_reserved_GiB'] = event['vram_peak_reserved_bytes']/1024**3
+        nonfinite=[key for key,value in event.items() if isinstance(value,float) and not math.isfinite(value)]
+        for key in nonfinite:event[key]=None
+        if nonfinite:event.update(nonfinite_fields=nonfinite,numerical_status='NONFINITE')
         if self.step % 5 == 0:
-            event['gpu_utilization_percent'] = self.utilization.drain() if self.utilization else None
+            util=self.utilization.drain() if self.utilization else None
+            event['gpu_utilization_percent']=util if util is None or math.isfinite(util) else None
             displayed={key:event[key] for key in ('task','epoch','optimizer_step','loss','train_acc')}
             print('STEP_METRICS ' + json.dumps(dict(arm=self.arm, **displayed)), flush=True)
             self.window = []

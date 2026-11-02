@@ -1,6 +1,6 @@
 # Gramian–Laplace on official Mamba-CL
 
-Current protocol: `amp_fp16_resize256_tune10_v2`. This is a new experiment relative
+Current protocol: `amp_fp16_ssmfp32_resize256_tune10_v3`. This is a new experiment relative
 to the earlier fp32/raw-image/50-epoch tuning pilot. Old Output is preserved but
 its checkpoints and validation selections are not reused in this protocol.
 Registered tiny CPU math checks pass; actual T4 speed and microbatch fit must be
@@ -57,8 +57,9 @@ are discarded. There is no local GPU measurement in this repository.
 
 ## Precision, progress and resume
 
-Microbatch CE uses CUDA fp16 autocast and GradScaler. GL penalty and sampled-label
-statistics/Gramian/diagnostics run outside autocast in fp32. Model master weights
+Microbatch CE uses CUDA fp16 autocast and GradScaler. SSM projections/delta/selective scan/group norm/gate run in an fp32 island,
+while outer input/output projections and convolution retain AMP. GL penalty and
+sampled-label statistics/Gramian/diagnostics also run in fp32. Model master weights
 remain fp32. The original evaluator receives --use_amp=True. Scaler state is
 checkpointed with optimizer/scheduler/RNG and restored before further updates.
 
@@ -131,3 +132,35 @@ python3 scripts/build_notebooks.py --backbone base --stage tune --commit <full-s
 
 Run `python3 -m tests.base_variant` for CPU-only routing/restore checks; actual
 base checkpoint loading, GPU memory and throughput still require Kaggle.
+
+
+## Numerical failure handling after the base AMP probe
+
+The reported ValueError about JSON NaN exposed an unhandled nonfinite metric;
+the traceback alone does not locate the first unstable tensor. Progress metrics
+now encode nonfinite floats as null with nonfinite_fields/numerical_status. This
+is diagnostic handling, not permission to train with NaN loss.
+
+Protocolv3 adds the same fp32 SSM island to every arm/backbone. The upstream
+forward_ssm returns the scan's input dtype before its later float32 group norm;
+fp16 range overflow there is a source-identified risk, not a locally reproduced
+root cause of the user's T4 failure. Input/output projections, convolution and
+evaluation still use AMP. Learning rates, microbatch sample weighting and GL
+formulas are unchanged. Earlier AMP-v2 checkpoints/profiles are kept separately;
+the notebook starts a fresh probe under the new policy and reuses local image cache.
+
+Each microbatch checks logits/loss before backward. GradScaler may skip nonfinite
+gradient attempts while reducing scale;64 consecutive skips are treated as a
+numerical failure. Parameters are checked after updates; optimizer states must
+be finite before approving the probe or checkpoint. Evaluation logits and GL
+statistics are checked too. No NaN/Inf is clamped or replaced by zero in training.
+
+A successful probe requires20 real updates, finite logits/loss/parameters/optimizer,
+VRAM headroom and the unchanged speed threshold. A numerical failure writes
+numerical_failure.json/benchmark.json with phase/location, returns76, and blocks
+tuning without trying another microbatch as though it were an OOM. The notebook
+reports NUMERICAL_FAILURE separately from SLOW/OOM/storage errors. No invalid
+checkpoint or execution profile is approved. GPU behavior remains unverified
+locally; run the new notebook probe to assess the actual T4 model.
+
+CPU-only numerical regressions: `python3 -m tests.numerical_safety`.

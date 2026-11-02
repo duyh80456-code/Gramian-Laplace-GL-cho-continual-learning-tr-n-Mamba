@@ -52,10 +52,10 @@ OUTPUT = RUN_ROOT / 'glcl_outputs'
 ROOT_OUT = OUTPUT
 subprocess.run([sys.executable, '-c', STORAGE_PREFLIGHT, '--working', str(RUN_ROOT),
                 '--ephemeral', str(EPHEMERAL), '--repo', str(REPO)], cwd=WORKING, check=True)
-# This scientific protocol must not overwrite or resume old fp32 experiments.
-if (OUTPUT/'tune').exists() or (OUTPUT/'main').exists():
+# Preserve earlier numerical protocols, including failed probe-only sessions.
+if OUTPUT.exists():
     identities=list(OUTPUT.glob('*/*/identity.json'))
-    if any(json.loads(p.read_text()).get('config',{}).get('protocol') != 'amp_fp16_resize256_tune10_v2' for p in identities):
+    if any(json.loads(p.read_text()).get('config',{}).get('protocol') != 'amp_fp16_ssmfp32_resize256_tune10_v3' for p in identities):
         previous=RUN_ROOT/('glcl_outputs_before_amp_'+str(int(time.time())))
         OUTPUT.rename(previous)
         print('Preserved old protocol Output at:',previous)
@@ -158,7 +158,9 @@ probe = [PYTHON, 'scripts/benchmark_throughput.py', '--data', DATA_ROOT,
          '--pretrained', PRETRAINED, '--out', str(BENCHMARK_OUT)]
 probe_result = subprocess.run(probe, env=ENV)
 if probe_result.returncode != 0:
-    raise RuntimeError('01 is PAUSED before tuning: inspect throughput_probe/benchmark.json and benchmark output. Below10 images/s requires review.')
+    report_path=BENCHMARK_OUT/'benchmark.json'
+    reason=json.loads(report_path.read_text()) if report_path.exists() else {'status':'ERROR','returncode':probe_result.returncode}
+    raise RuntimeError('01 stopped before tuning: '+str(reason.get('status'))+'. '+str(reason.get('reason','Inspect probe console.log; this is not necessarily a speed failure.')))
 '''
 launch = '''
 ENV['GL_EXECUTION_PROFILE']=str(OUTPUT/'execution_profile.json')
@@ -171,7 +173,7 @@ DEADLINE = SESSION_START + 11*3600  # includes environment setup; 5-min hard gra
 jobs_path = RUN_ROOT/'effective_jobs'/f'{STAGE}.json'
 atomic_json(JOBS, jobs_path)
 atomic_json(dict(run_tag=RUN_TAG, stage=STAGE, seed=0, source_commit=CODE_COMMIT,
-                 jobs=JOBS, experiment_protocol='amp_fp16_resize256_tune10_v2', workers=2, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1,
+                 jobs=JOBS, experiment_protocol='amp_fp16_ssmfp32_resize256_tune10_v3', workers=2, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1,
                  performance_observer_sha256=globals().get('PERFORMANCE_OBSERVER_SHA256'),
                  protocol='Full registered horizon; exit75 resumes without truncation'),
             OUTPUT/f'notebook_protocol_{STAGE}.json')
@@ -252,7 +254,7 @@ SESSION_START = time.time()
         replacements={
             '/kaggle/working/gramian-laplace':'/kaggle/working/gramian-laplace-base',
             '/kaggle/working/glcl':'/kaggle/working/glcl_base',
-            'amp_fp16_resize256_tune10_v2':'amp_fp16_resize256_tune10_base_v2',
+            'amp_fp16_ssmfp32_resize256_tune10_v3':'amp_fp16_ssmfp32_resize256_tune10_base_v3',
             'optional explicit path to defocus_mamba_large_cls_21k.pth':'optional explicit path to defocus_mamba_base_cls.pth'}
         for item in cells:
             body=''.join(item['source'])

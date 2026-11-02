@@ -489,3 +489,45 @@ must match. Old fp32/different-horizon checkpoints remain incompatible. A runnin
 launcher does not acquire these display changes until the notebook is updated.
 The supplied log shows data preparation PASSED but a missing exact base
 classification checkpoint in Input; it is not evidence of a training failure.
+
+
+### Numerical safety after the base fp16 probe hit JSON NaN
+
+The user reports valid loss/accuracy at optimizer attempts5/10, followed by a
+nonfinite value rejected by strict JSON serialization. The traceback establishes
+an invalid metric but does not identify the original tensor/layer. Converting
+NaN to a serializable value alone would conceal possible training instability.
+Progress now uses null plus explicit nonfinite_fields/status, while model
+nonfinite logits/loss are fatal before the optimizer step. Evaluation logits,
+GL statistics, updated trainable parameters and checkpoint/approved-probe
+optimizer state are also checked. Actual invalid tensors are never clamped.
+
+Code inspection identifies a range-risk in upstream MambaMixer.forward_ssm:
+selective_scan returns its input dtype before a subsequent float32 group norm.
+Use a uniform fp32 island for SSM projections, delta, recurrence, normalization
+and gate multiplication under outer fp16 AMP. Outer input/output projections and
+convolution retain AMP. This protects a plausible overflow path; the actual T4
+failure is not reproduced here and no GPU-resolution claim is made. No learning
+rate reduction, clipping or formula change is introduced. GradScaler still
+handles recoverable backward overflow, recording skipped attempts;64 consecutive
+skips block the run. Twenty actual finite updates are required for probe approval.
+
+This numerical precision change applies to all arms/backbones, recorded as
+amp_fp16_ssmfp32_resize256_tune10_v3 (base variant has base_v3 suffix), with
+ssm_fp32=true and actual wrapped block names in effective_config.json. Previous
+AMP-v2 states/profiles are preserved separately and excluded from this protocol;
+raw/resized image caches remain reusable. Probe-only failed sessions are included
+in the protocol-change detection. Old display-only source exceptions are removed.
+
+Numerical failures write phase/location and reason to numerical_failure.json
+and the probe's benchmark.json, return76, and block tuning. They are never retried
+as an OOM or described as a failed speed threshold. Parent probe must propagate
+the failure and cannot write an execution profile. Benchmark verification rejects
+nonfinite throughput and absent/false finite-state assertions before profile write.
+Loss/accuracy-only notebook display is retained; errors remain visible.
+
+CPU regressions cover NaN/Inf rejection, diagnostic null serialization, fp32 island
+under outer CPU autocast with gradients, invalid-forward failure before an update,
+and parent numerical-failure handling without a profile. Tiny optimizer-loop,
+storage/backbone isolation and registered math checks remain CPU-only. Actual
+base weights with native CUDA kernels and T4 throughput still require Kaggle.

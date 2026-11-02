@@ -44,7 +44,7 @@
     "out_proj.weight",
     "A_log"
   ],
-  "protocol": "amp_fp16_resize256_tune10_v2",
+  "protocol": "amp_fp16_ssmfp32_resize256_tune10_v3",
   "use_amp": true,
   "microbatch_candidates": [
     50,
@@ -59,5 +59,6 @@
     5,
     8
   ],
-  "expand_times": 5
+  "expand_times": 5,
+  "ssm_fp32": true
 }

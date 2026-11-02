@@ -1,0 +1,31 @@
+{
+  "status": "CPU_CHECKS_PASS",
+  "gpu_status": "PENDING_KAGGLE_VALIDATION",
+  "reported_failure": "Nonfinite metric rejected by strict JSON serialization during base AMP probe",
+  "root_cause": "Original failing tensor/layer not established by provided traceback; fp16 scan-output range is a source-identified risk",
+  "numerical_policy": "Outer AMP fp16 plus shared fp32 SSM island; no LR/GL-formula/clipping change",
+  "checks": [
+    "NaN-safe progress JSON with explicit null/status",
+    "loss/parameter nonfinite rejection",
+    "fp32 island dtype/autocast/gradient/idempotence",
+    "injected bad forward stops before optimizer update/checkpoint",
+    "parent numerical failure propagation with no profile approval",
+    "finite throughput and finite-state benchmark gate",
+    "actual tiny optimizer-loop regression",
+    "registered CPU math",
+    "checkpoint/base/large isolation and storage regressions",
+    "official insertion-point uniqueness and patched source compile"
+  ],
+  "cpu_commands": [
+    "tests.section6",
+    "tests.numerical_safety",
+    "tests.step_telemetry",
+    "tests.amp_protocol",
+    "tests.storage_resume",
+    "tests.base_variant",
+    "tests.storage_bootstrap"
+  ],
+  "scope": "Tiny CPU fixtures and mocked probe children only; no native Mamba CUDA/T4 model execution",
+  "production_min_free_bytes": 2147483648,
+  "test_min_free_bytes": 16777216
+}

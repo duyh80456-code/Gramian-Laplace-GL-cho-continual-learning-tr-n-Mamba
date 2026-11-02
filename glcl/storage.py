@@ -9,11 +9,8 @@ import pickletools
 import shutil
 import zipfile
 
-# Audited AMP large/base revisions: display-only update, identical training configs.
-LEGACY_SOURCES = {
-    'd00597b1628098fe5a1531bd1e7307bc2a2f3434528ec6544ba94432e01eeb5b',
-    '5ae6fff335ab294013099e32db85a7110ea175c4320814b40ab94ddf9f1a50d6',
-}
+# FP32 SSM changes numerical policy; earlier AMP-v2 checkpoints are separate.
+LEGACY_SOURCES = set()
 
 
 class StoragePause(RuntimeError):

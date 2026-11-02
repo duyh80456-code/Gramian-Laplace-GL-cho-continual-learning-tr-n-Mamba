@@ -58,10 +58,10 @@ with tempfile.TemporaryDirectory() as temporary:
     identity=dict(arm='MambaCL',stage='tune',config=__import__('glcl.configuration',fromlist=['load_config']).load_config('tune'),
                   source_sha256=digest_sources(),dataset_manifest=Runtime.data_manifest(data),
                   pretrained_sha256=Runtime.file_hash(pretrained))
-    report=dict(status='PASS',optimizer_steps=20,gpu_count=1,images_per_second=20.,identity=identity,microbatch=50,use_checkpoint=False)
+    report=dict(numerical_status='FINITE',finite_logits=True,finite_loss=True,finite_parameters=True,finite_optimizer=True,status='PASS',optimizer_steps=20,gpu_count=1,images_per_second=20.,identity=identity,microbatch=50,use_checkpoint=False)
     path=root/'benchmark.json';path.write_text(json.dumps(report))
     assert module.verify(path,data,pretrained)['status']=='PASS'
-    for bad in [dict(status='SLOW',images_per_second=9.),dict(optimizer_steps=19),dict(gpu_count=2)]:
+    for bad in [dict(status='SLOW',images_per_second=9.),dict(optimizer_steps=19),dict(gpu_count=2),dict(numerical_status='NONFINITE'),dict(finite_loss=False),dict(images_per_second=float('nan'))]:
         path.write_text(json.dumps(dict(report,**bad)))
         try:module.verify(path,data,pretrained)
         except RuntimeError:pass

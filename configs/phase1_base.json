@@ -44,7 +44,7 @@
     "out_proj.weight",
     "A_log"
   ],
-  "protocol": "amp_fp16_resize256_tune10_base_v2",
+  "protocol": "amp_fp16_ssmfp32_resize256_tune10_base_v3",
   "use_amp": true,
   "microbatch_candidates": [
     50,
@@ -63,5 +63,6 @@
   "backbone": "base",
   "model_name": "defocus_mamba_base",
   "model_config": "configs/defocus_mamba_base_cl.yaml",
-  "checkpoint_name": "defocus_mamba_base_cls.pth"
+  "checkpoint_name": "defocus_mamba_base_cls.pth",
+  "ssm_fp32": true
 }

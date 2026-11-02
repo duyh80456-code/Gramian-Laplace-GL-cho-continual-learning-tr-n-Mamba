@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory() as temporary:
             self.stdout=['CUDA out of memory\n'] if self.code else ['probe complete\n']
             if not self.code:
                 out=Path(command[command.index('--out')+1])
-                (out/'benchmark.json').write_text(json.dumps(dict(status='PASS',gpu_total_bytes=16*1024**3,
+                (out/'benchmark.json').write_text(json.dumps(dict(numerical_status='FINITE',finite_logits=True,finite_loss=True,finite_parameters=True,finite_optimizer=True,status='PASS',gpu_total_bytes=16*1024**3,
                     vram_peak_reserved_bytes=10*1024**3,optimizer_steps=20,gpu_count=1,images_per_second=20)))
         def wait(self):return self.code
     with patch.object(probe.subprocess,'Popen',Child),patch.object(probe,'verify',lambda *args:None), \

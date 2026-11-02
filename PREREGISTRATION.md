@@ -82,3 +82,14 @@ this amended protocol. This amendment follows a pilot with task1 epoch1/2 train
 logs and storage failure; it is not described as registered before any training.
 Details, including numerical/data changes and unmeasured GPU limitations, are
 recorded in DECISIONS.md.
+
+
+## Numerical precision amendment following the failed base AMP probe
+
+Protocolv3 uses an fp32 SSM island inside fp16 AMP uniformly across all arms and
+both backbones, keeping the same learning rates and GL operators. The amendment
+follows a base probe with NaN telemetry; it is not claimed to precede that pilot.
+Finite model/optimizer checks are required before probe approval or checkpoint.
+Earlier v2 numerical results/state are not pooled with this amended protocol.
+DECISIONS.md distinguishes the source-identified overflow risk from the
+unreproduced actual T4 root cause.

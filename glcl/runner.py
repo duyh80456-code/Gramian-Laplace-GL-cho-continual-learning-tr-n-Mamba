@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from .io import ROOT, atomic_json, atomic_torch, digest_sources, require_tests
 from .regularizer import OnlineGL, preserve_rng, mixers
+from .numerics import NumericalError, require_finite, parameters_finite, require_finite_parameters, enable_fp32_ssm, optimizer_state_tensors
 from .checkpoint import (cpu_tree, model_snapshot, load_model, write_context, load_context,
                          prune_contexts, encode_cache, decode_cache)
 from .storage import (StoragePause, compatible_identity, compatible_source, require_space,
@@ -33,6 +34,8 @@ def load_official(runtime):
     patches = {
         'loss: Tensor = criterion(logits / temperature, target)':
             'loss: Tensor = criterion(logits / temperature, target)\n        loss = GVM.gl_runtime.add_loss(loss, model)',
+        '        assert logits.ndim == 2':
+            '        GVM.gl_runtime.require_eval_finite(logits)\n        assert logits.ndim == 2',
         '    torch.cuda.empty_cache()\n    for epoch':
             '    GVM.gl_runtime.restore_optimizer(GVM, model, optimizer, scheduler)\n    torch.cuda.empty_cache()\n    for epoch',
         '        scheduler.step(epoch)\n\n    cache_state':
@@ -111,6 +114,7 @@ class Runtime:
         self.gpu_utilization = None
         self.scaler = None
         self.optimizer_updates = 0
+        self.overflow_streak = 0
         self.identity = dict(source_sha256=digest_sources(), config=config, arm=args.arm,
                              stage=args.stage, strength=args.strength, seed=0,
                              dataset_manifest=self.data_manifest(args.data_root),
@@ -160,6 +164,10 @@ class Runtime:
             raise RuntimeError('Expected official ImageNet-R train/val directory tree')
         return hashlib.sha256(json.dumps(manifest).encode()).hexdigest()
 
+    @staticmethod
+    def require_eval_finite(logits):
+        require_finite(logits,'evaluation logits')
+
     def add_loss(self, loss, model):
         if self.args.arm == 'MambaCL':
             return loss
@@ -203,13 +211,17 @@ class Runtime:
             torch.cuda.synchronize()
             compute_start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
+            self.active_location=dict(task=gvm.cl_mngr.current_taskid+1,epoch=epoch,optimizer_attempt=self.meter.step+1)
             N = len(images)
             for start in range(0, N, self.config['microbatch']):
+                self.active_location['microbatch_start']=start
                 x = images[start:start + self.config['microbatch']].cuda(non_blocking=True)
                 y = labels[start:start + self.config['microbatch']].cuda(non_blocking=True)
                 with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.config.get('use_amp', False)):
                     logits = model(x)
-                    loss = criterion(logits / gvm.args.temperature, y) * len(x) / N
+                    loss = criterion(logits.float() / gvm.args.temperature, y) * len(x) / N
+                require_finite(logits,'logits')
+                require_finite(loss,'cross_entropy')
                 self.scaler.scale(loss).backward()
                 total_loss += float(loss.detach()) * N
                 total_correct += int((logits.argmax(-1) == y).sum())
@@ -217,11 +229,23 @@ class Runtime:
                 with torch.autocast(device_type='cuda', enabled=False):
                     penalty = self.gl.penalty(model)
                 if penalty is not None:
+                    require_finite(penalty,'GL_penalty')
                     self.scaler.scale(penalty).backward()
+            self.scaler.unscale_(optimizer)
+            gradients=[(name,p.grad) for name,p in model.named_parameters() if p.grad is not None and p.requires_grad]
+            finite_gradients=parameters_finite(gradients)
+            if not self.config.get('use_amp',False) and not finite_gradients:
+                raise NumericalError('Nonfinite unscaled gradients without AMP recovery')
             previous_scale=self.scaler.get_scale()
             self.scaler.step(optimizer)
             self.scaler.update()
             update_skipped=self.scaler.get_scale()<previous_scale
+            if not finite_gradients and not update_skipped:
+                raise NumericalError('Nonfinite gradients were not skipped by GradScaler')
+            self.overflow_streak=getattr(self,'overflow_streak',0)+1 if update_skipped else 0
+            if self.overflow_streak>=64:
+                raise NumericalError('64 consecutive AMP gradient-overflow skips')
+            require_finite_parameters(((name,p) for name,p in model.named_parameters() if p.requires_grad),'parameters after update')
             self.optimizer_updates=getattr(self,'optimizer_updates',0)+int(not update_skipped)
             total += N
             torch.cuda.synchronize()
@@ -229,11 +253,13 @@ class Runtime:
             step_in_epoch += 1
             self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute, loss=total_loss/total, train_acc=100*total_correct/total)
             if getattr(self.args, 'benchmark_steps', 0) and self.optimizer_updates == self.args.benchmark_steps:
+                require_finite_parameters(optimizer_state_tensors(optimizer),'optimizer state at probe completion')
                 result = self.meter.summary()
                 result.update(optimizer_attempts=self.meter.step,optimizer_steps=self.optimizer_updates,
                               amp_skipped_updates=self.meter.step-self.optimizer_updates)
                 fraction = result['dataloader_wait_fraction']
-                result.update(status='PASS' if result['images_per_second'] >= 10 else 'SLOW',
+                result.update(numerical_status='FINITE',finite_logits=True,finite_loss=True,finite_parameters=True,finite_optimizer=True,
+                    status='PASS' if result['images_per_second'] >= 10 else 'SLOW',
                     minimum_images_per_second=10, identity=self.identity,
                     vram_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                     vram_peak_reserved_bytes=torch.cuda.max_memory_reserved(),
@@ -316,6 +342,8 @@ class Runtime:
             raise
 
     def _save(self, gvm, task, epoch, model, optimizer=None, scheduler=None, complete=False):
+        require_finite_parameters(model_snapshot(model,gvm.args.training_string,cpu=False).items(),'checkpoint parameters/buffers')
+        if optimizer is not None:require_finite_parameters(optimizer_state_tensors(optimizer),'checkpoint optimizer state')
         if self.context_file is None:
             if self._encoded_cache is None:
                 self._encoded_cache = encode_cache(pack_cache(gvm, model))
@@ -411,7 +439,10 @@ class Runtime:
         model_config.TRAIN.USE_CHECKPOINT=cfg['use_checkpoint']
         model_config.freeze()
         model = official.build_model(model_config)
-        atomic_json(dict(config=cfg, args=vars(args), gradient_checkpointing=cfg['use_checkpoint'],
+        fp32_blocks=enable_fp32_ssm(model) if cfg.get('ssm_fp32') else []
+        if cfg.get('ssm_fp32') and len(fp32_blocks)!=model_config.MODEL.depth:
+            raise RuntimeError('FP32 SSM island did not cover every mixer')
+        atomic_json(dict(config=cfg, args=vars(args), fp32_ssm_blocks=fp32_blocks, gradient_checkpointing=cfg['use_checkpoint'],
                          checkpointed_blocks=sum(bool(getattr(m,'use_checkpoint',False)) for m in model.modules())), self.out/'effective_config.json')
         checkpoint = torch.load(args.pretrained_path, map_location='cpu')
         weights=checkpoint['model']
@@ -470,6 +501,7 @@ class Runtime:
                         from .diagnostics import measure
                         measure(model, loader, stats, self.out / 'diagnostics.json')
                 stats = {name: {k: v for k, v in fs.items() if not k.startswith(('ewc_', 'kfac_'))} for name, fs in stats.items()}
+                require_finite_parameters(((name+':'+key,value) for name,factors in stats.items() for key,value in factors.items()),'GL statistics')
                 self.gl.consolidate(model, stats)
             official.evaluate_tasks_sofar(gvm, task, model)
             official.task_ending_info(gvm)
@@ -525,6 +557,15 @@ def main():
         runtime.run()
     except BenchmarkComplete:
         return
+    except NumericalError as error:
+        optimizer_steps=runtime.optimizer_updates
+        failure=dict(status='NUMERICAL_FAILURE',reason=str(error),identity=runtime.identity,
+                     optimizer_steps=optimizer_steps,optimizer_attempts=runtime.meter.step if runtime.meter else 0,
+                     location=getattr(runtime,'active_location',{}),training_allowed=False)
+        atomic_json(failure,runtime.out/'numerical_failure.json')
+        if a.benchmark_steps:atomic_json(failure,runtime.out/'benchmark.json')
+        print('NUMERICAL_FAILURE: '+str(error)+'; tuning blocked; last checkpoint retained.',flush=True)
+        raise SystemExit(76)
     except StoragePause:
         try:
             runtime.prune_uncommitted()

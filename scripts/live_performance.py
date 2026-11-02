@@ -27,6 +27,8 @@ def value(line, key, percent=False):
 
 def metric_event(line, stage):
     line = line.strip()
+    if line.startswith('NUMERICAL_FAILURE:'):
+        return 'ERROR', {}, line
     if line.startswith('CHECKPOINT I/O WARNING:'):
         return 'WARNING', {}, line
     if line.startswith('STEP_METRICS '):
