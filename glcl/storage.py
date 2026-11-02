@@ -10,8 +10,7 @@ import shutil
 import zipfile
 
 # Audited pre-storage-fix source, including the user's 9367998 Kaggle run.
-LEGACY_SOURCES = {'ddf74bae8905a19b6d4a83ac0fba297407a8815fbfa197814ff5498923afa07a',
-                  '14cd107b63e021c1475deedd005888b8c56bbec3fba47088bbd067200f34cefe'}
+LEGACY_SOURCES = set()  # AMP/resize/tune10 is a new protocol, not a storage-only migration.
 
 
 class StoragePause(RuntimeError):
@@ -221,6 +220,8 @@ def restore_direct(inputs, working):
                     catalog[str(relative)].append(str(path))
             elif path.name == 'latest.pt' and len(relative.parts) == 3:
                 try:
+                    if not compatible_source(checkpoint_metadata(path).get('source_sha256')):
+                        continue
                     rank = checkpoint_position(path)
                 except (ValueError, OSError, zipfile.BadZipFile, StopIteration):
                     continue
@@ -284,6 +285,9 @@ def restore_direct(inputs, working):
               '(large contexts/curvature remain on Input)', flush=True)
     # Results/selection metadata are small; completed runs stay skippable.
     for root in sorted(roots, key=lambda p: p.stat().st_mtime):
+        identities=list(root.glob('*/*/identity.json'))
+        if identities and not any(compatible_source(json.loads(p.read_text()).get('source_sha256')) for p in identities):
+            continue
         for file in root.iterdir():
             if file.is_file() and not file.name.startswith('.') and file.suffix in ('.json', '.csv', '.md', '.log'):
                 destination = working / file.name

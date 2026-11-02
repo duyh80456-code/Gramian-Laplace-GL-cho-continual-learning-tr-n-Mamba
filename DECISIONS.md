@@ -383,3 +383,52 @@ actual instrumented loop stopping at20 updates across two tiny CPU epochs withou
 writing a training checkpoint. Storage/legacy resume checks and section-six pass.
 GPU throughput, VRAM and utilization remain PENDING until the user runs Kaggle;
 no images/sec numbers from CPU fixtures are presented as MambaCL performance.
+
+### User amendment: AMP, resize256 and shorter tuning shared by all arms
+
+Items1,4,5 are explicitly amended by the user and apply uniformly to MambaCL,
+GL and hybrid, without cherry-picking an arm's precision, image preparation or
+validation horizon. Protocol identifier: amp_fp16_resize256_tune10_v2.
+
+1. Train CE and evaluation use fp16 AMP. The microbatch runner now uses autocast
+   and GradScaler; the official evaluator receives --use_amp=True. GL penalty,
+   sampled-label statistics, Gramian factors and diagnostics remain fp32 outside
+   autocast. Model master parameters remain fp32. GradScaler state is retained
+   in checkpoints and restored. AMP overflow-skipped updates are counted in probe
+   attempts; success requires20 actual optimizer updates, with all attempt time
+   included. This changes numerical optimization and is disclosed for every arm.
+4. Every arm uses the same precomputed short-side256 ImageNet-R cache under/tmp.
+   PIL bicubic and JPEG quality95 are fixed; original class/filename and train/val
+   membership are retained. This is a shared data-pipeline change, including eval,
+   not a reproduction of the original-resolution pipeline. Persistent train-loader
+   workers are enabled. Exact split coverage is checked before resizing; a manifest
+   permits reuse of the resulting cache. Original attached images are untouched.
+5. Every01 tuning candidate now uses10 epochs/task, LR milestones5/8, on the same
+   three tasks and holdout rule. Every02 main arm remains50 epochs/task with
+   milestones25/40. This is a cheaper tuning protocol and may choose different
+   lambdas than50-epoch tuning. Selection metadata/configs prevent mixing protocols.
+
+The original YAML TRAIN.USE_CHECKPOINT=True is consumed by DefocusAttentionNetwork
+and MambaBlock.forward really calls torch.utils.checkpoint.checkpoint. Isolated
+AMP probes try50,25,10 with checkpointing OFF, then retry ON only if needed;2GiB
+headroom relative to peak reserved VRAM is required. The measured profile is fixed
+and shared by all arms and02. This baseline fit does not prove future GL history
+memory fits. Effective batch200, one ModAdam update/batch, and baseline frozen
+dt_proj are preserved. No upstream vendor source is edited.
+
+The upstream default expand_times=5 repeats training images five times/epoch;
+it was already active in the fp32 pilot and is now explicit. Thus a throughput
+estimate based solely on unique task-image count undercounts processed images.
+Telemetry counts actual images and prints every5 optimizer attempts, including
+running CE loss, timing, exposed loader wait and peak VRAM. Steps are not resume
+checkpoints. Child output remains unbuffered. No GPU speedup or T4 fit is claimed
+from CPU-only checks.
+
+Atomic latest-only checkpoint writes and immutable cache sidecars are retained;
+GradScaler is added without storing frozen backbone parameters. Venv/cache/tar/
+images stay in/tmp, generated tar is deleted after extraction, periodic tar stays
+disabled, I/O capacity failures produce controlled PAUSED and preserve the last
+checkpoint, with2GiB free-space guards/heartbeat. Old fp32 outputs are preserved
+separately and excluded from this protocol; do not resume them or reuse their
+selections after these scientific changes. Use a fresh Kaggle session for the new
+protocol when the old working filesystem is full.

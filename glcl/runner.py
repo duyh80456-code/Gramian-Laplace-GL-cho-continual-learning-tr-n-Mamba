@@ -107,6 +107,8 @@ class Runtime:
         self.valid_paths = set()
         self.meter = None
         self.gpu_utilization = None
+        self.scaler = None
+        self.optimizer_updates = 0
         self.identity = dict(source_sha256=digest_sources(), config=config, arm=args.arm,
                              stage=args.stage, strength=args.strength, seed=0,
                              dataset_manifest=self.data_manifest(args.data_root),
@@ -165,6 +167,10 @@ class Runtime:
     def train_epoch(self, gvm, epoch, loader, model, criterion, optimizer):
         if self.resume and not self.resume['task_complete'] and gvm.cl_mngr.current_taskid == self.resume['task'] and epoch <= self.resume['epoch']:
             return 'restored epoch'
+        if self.scaler is None:
+            self.scaler=torch.cuda.amp.GradScaler(enabled=self.config.get('use_amp', False))
+            if self.resume and self.resume.get('scaler'):
+                self.scaler.load_state_dict(self.resume['scaler'])
         self.check_next_checkpoint(gvm, model, optimizer)
         # Preserve upstream effective minibatches and one ModAdam step per batch.
         # Only split memory use; CE is sample weighted, GL applied once per update.
@@ -199,26 +205,37 @@ class Runtime:
             for start in range(0, N, self.config['microbatch']):
                 x = images[start:start + self.config['microbatch']].cuda(non_blocking=True)
                 y = labels[start:start + self.config['microbatch']].cuda(non_blocking=True)
-                logits = model(x)
-                loss = criterion(logits / gvm.args.temperature, y) * len(x) / N
-                loss.backward()
+                with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.config.get('use_amp', False)):
+                    logits = model(x)
+                    loss = criterion(logits / gvm.args.temperature, y) * len(x) / N
+                self.scaler.scale(loss).backward()
                 total_loss += float(loss.detach()) * N
                 total_correct += int((logits.argmax(-1) == y).sum())
             if self.args.arm != 'MambaCL':
-                penalty = self.gl.penalty(model)
+                with torch.autocast(device_type='cuda', enabled=False):
+                    penalty = self.gl.penalty(model)
                 if penalty is not None:
-                    penalty.backward()
-            optimizer.step()
+                    self.scaler.scale(penalty).backward()
+            previous_scale=self.scaler.get_scale()
+            self.scaler.step(optimizer)
+            self.scaler.update()
+            update_skipped=self.scaler.get_scale()<previous_scale
+            self.optimizer_updates=getattr(self,'optimizer_updates',0)+int(not update_skipped)
             total += N
             torch.cuda.synchronize()
             compute = time.perf_counter() - compute_start
             step_in_epoch += 1
-            self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute)
-            if getattr(self.args, 'benchmark_steps', 0) and self.meter.step == self.args.benchmark_steps:
+            self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute, loss=total_loss/total)
+            if getattr(self.args, 'benchmark_steps', 0) and self.optimizer_updates == self.args.benchmark_steps:
                 result = self.meter.summary()
+                result.update(optimizer_attempts=self.meter.step,optimizer_steps=self.optimizer_updates,
+                              amp_skipped_updates=self.meter.step-self.optimizer_updates)
                 fraction = result['dataloader_wait_fraction']
                 result.update(status='PASS' if result['images_per_second'] >= 10 else 'SLOW',
                     minimum_images_per_second=10, identity=self.identity,
+                    vram_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                    vram_peak_reserved_bytes=torch.cuda.max_memory_reserved(),
+                    gpu_total_bytes=torch.cuda.get_device_properties(0).total_memory,
                     gpu_count=1, dataloader_workers=self.config['workers'],
                     host_cpu_count=os.cpu_count(), effective_batch=self.config['batch_size'],
                     microbatch=self.config['microbatch'], data_root=str(Path(self.args.data_root).resolve()),
@@ -239,7 +256,12 @@ class Runtime:
         if self.resume and not self.resume['task_complete'] and not self.restored:
             optimizer.load_state_dict(self.resume['optimizer'])
             scheduler.load_state_dict(self.resume['scheduler'])
+            if self.scaler is None:
+                self.scaler=torch.cuda.amp.GradScaler(enabled=self.config.get('use_amp',False))
+            if self.resume.get('scaler'):
+                self.scaler.load_state_dict(self.resume['scaler'])
             restore_rng(self.resume['rng'])
+            self.optimizer_updates=self.resume.get('optimizer_updates',0)
             self.restored = True
             self.resume.pop('optimizer', None)
             self.resume.pop('scheduler', None)
@@ -289,6 +311,8 @@ class Runtime:
                      params=gvm.param_dict, labels=gvm.label_map_g2l,
                      accuracy=gvm.acc_mat_dict, rng=rng_state(),
                      elapsed=self.elapsed + time.monotonic() - self.started,
+                     optimizer_updates=self.optimizer_updates,
+                     scaler=self.scaler.state_dict() if self.scaler is not None else None,
                      optimizer=optimizer.state_dict() if optimizer is not None else None,
                      scheduler=scheduler.state_dict() if scheduler is not None else None)
         atomic_torch(state, self.out / 'latest.pt')
@@ -345,6 +369,7 @@ class Runtime:
                     '--epochs', str(cfg['epochs']), '--decay_milestones', *map(str, cfg['decay_milestones']),
                     '--batch_size', str(cfg['batch_size']), '--workers', str(cfg['workers']),
                     '--eval_workers', str(cfg['eval_workers']), '--eval_batch_size', str(cfg['eval_batch_size']),
+                    '--expand_times',str(cfg['expand_times']), '--use_amp', str(cfg['use_amp']), '--persistent_workers', str(cfg['persistent_workers']),
                     '--sample_type', 'path', '--training_string', *(cfg['baseline_training_string'] if self.args.arm == 'MambaCL' else cfg['training_string'])]
         if self.args.arm != 'GL':
             sys.argv += ['--use_null_space']
@@ -363,7 +388,13 @@ class Runtime:
             self.split_validation(gvm)
         gvm.cache_dict['exp_start_time'] = time.time()
         official.GVM = gvm
-        model = official.build_model(official.get_config(str(ROOT / 'upstream/mamba-cl/utils/defocus_mamba_large_22k.yaml')))
+        model_config=official.get_config(str(ROOT / 'upstream/mamba-cl/utils/defocus_mamba_large_22k.yaml'))
+        model_config.defrost()
+        model_config.TRAIN.USE_CHECKPOINT=cfg['use_checkpoint']
+        model_config.freeze()
+        model = official.build_model(model_config)
+        atomic_json(dict(config=cfg, args=vars(args), gradient_checkpointing=cfg['use_checkpoint'],
+                         checkpointed_blocks=sum(bool(getattr(m,'use_checkpoint',False)) for m in model.modules())), self.out/'effective_config.json')
         checkpoint = torch.load(args.pretrained_path, map_location='cpu')
         result = model.load_state_dict(checkpoint['model'], strict=False)
         atomic_json(dict(missing=result.missing_keys, unexpected=result.unexpected_keys), self.out / 'pretrained_keys.json')
@@ -405,7 +436,7 @@ class Runtime:
                 dataset = official.define_dataset(gvm, classes, training=True, transform_type=args.transform_type,
                                                    target_map_to_local=True, use_eval_transform=True, expand_times=1)
                 # Deterministic random subset over ALL classes, not first-class prefix.
-                with preserve_rng():
+                with preserve_rng(), torch.autocast(device_type='cuda',enabled=False):
                     indices = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(task + 1000))[:cfg['statistics_max_samples']]
                     loader = torch.utils.data.DataLoader(torch.utils.data.Subset(dataset, indices.tolist()), batch_size=1, shuffle=False, num_workers=cfg['eval_workers'])
                     stats = collect(model, loader, cfg['statistics_max_samples'], seed=task + 2000, diagnostics=task == 0 and self.args.stage == 'main')
@@ -437,6 +468,8 @@ def main():
     p.add_argument('--strength', type=float, default=1.)
     p.add_argument('--selection')
     p.add_argument('--benchmark-steps', type=int, default=0)
+    p.add_argument('--microbatch',type=int)
+    p.add_argument('--checkpointing',type=int,choices=[0,1])
     p.add_argument('--data-root', required=True)
     p.add_argument('--pretrained', required=True)
     p.add_argument('--out', required=True)
@@ -446,7 +479,8 @@ def main():
     if a.benchmark_steps and (Path(a.out)/'latest.pt').exists():
         p.error('Benchmark output must be isolated from training checkpoints')
     require_tests()
-    cfg = json.loads((ROOT / 'configs/phase1.json').read_text())
+    from .configuration import load_config
+    cfg = load_config(a.stage, a.microbatch, bool(a.checkpointing) if a.checkpointing is not None else None)
     if a.stage == 'main' and a.arm != 'MambaCL':
         if not a.selection:
             p.error('Main GL arms require --selection from validation tuning')

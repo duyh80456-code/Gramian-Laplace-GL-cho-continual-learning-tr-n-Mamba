@@ -69,3 +69,16 @@ and explicitly authorized this replacement before any training result:
 Both relative checks now pass (.852433>.725509; .968065>.950543). See
 reports/section6.json. Stage one has NOT started locally; the user elected to
 run01 then02 on Kaggle. No benchmark result informed this correction.
+
+## User-authorized protocol amendment after the failed fp32 pilot
+
+New protocol amp_fp16_resize256_tune10_v2 applies fp16 train/eval AMP and a shared
+short-side256 image cache to every arm; GL curvature/penalty remain fp32. Tuning
+uses10 epochs with LR milestones5/8 for each candidate; main retains50 epochs and
+25/40. Microbatch is selected50/25/10 by an isolated baseline fit/throughput probe,
+with checkpointing disabled if feasible. All arms share that execution profile.
+Old fp32/raw-resolution/50-epoch tuning state and selections are not mixed with
+this amended protocol. This amendment follows a pilot with task1 epoch1/2 train
+logs and storage failure; it is not described as registered before any training.
+Details, including numerical/data changes and unmeasured GPU limitations, are
+recorded in DECISIONS.md.

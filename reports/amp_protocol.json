@@ -1,0 +1,41 @@
+{
+  "protocol": "amp_fp16_resize256_tune10_v2",
+  "status": "CPU_CHECKS_PASS",
+  "gpu_status": "PENDING_KAGGLE_PROBE",
+  "shared_changes": [
+    "fp16 train/eval AMP; fp32 GL penalty/statistics",
+    "short-side256 shared JPEG cache",
+    "tune10 epochs milestones5/8; main50 milestones25/40"
+  ],
+  "probe": {
+    "microbatch_candidates": [
+      50,
+      25,
+      10
+    ],
+    "checkpointing_order": [
+      false,
+      true
+    ],
+    "minimum_headroom_GiB": 2,
+    "actual_optimizer_updates": 20,
+    "minimum_images_per_second": 10
+  },
+  "checkpoint": "Trainable parameters/buffers plus optimizer/scheduler/scaler/RNG; immutable cache sidecar; frozen backbone reconstructed from pretrained",
+  "checks": [
+    "section6 CPU math",
+    "tiny optimizer-loop telemetry",
+    "stage schedules",
+    "resized-cache dimension/reuse",
+    "execution-profile loading",
+    "reject mismatched old protocol",
+    "compact checkpoint and same-protocol format restore",
+    "disk/Output guards and injected save failures",
+    "bootstrap scratch cleanup and optional-archive failure"
+  ],
+  "limitations": [
+    "No CUDA/AMP numerical or throughput measurement on this local macOS CPU host",
+    "Baseline fit does not guarantee future GL-history VRAM fits",
+    "Old fp32 state/selections must not be mixed with new protocol"
+  ]
+}

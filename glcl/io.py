@@ -15,6 +15,11 @@ def atomic_json(value, path):
     try:
         tmp.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
         os.replace(tmp, path)
+    except OSError as error:
+        if error.errno in (errno.ENOSPC,errno.EIO,getattr(errno,'EDQUOT',122)):
+            from .storage import StoragePause
+            raise StoragePause('Metadata write failed; previous committed state retained: '+str(path)) from error
+        raise
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -35,7 +40,7 @@ def atomic_torch(value, path):
                 os.fsync(stream.fileno())
             os.replace(tmp, path)
         except (OSError, RuntimeError) as error:
-            if (isinstance(error, OSError) and error.errno == errno.ENOSPC
+            if (isinstance(error, OSError)
                     or any(s in str(error).lower() for s in ('file write failed', 'failed writing', 'unexpected pos'))):
                 raise StoragePause('Checkpoint write failed; previous committed file retained: '
                                    + str(path) + '. ' + str(error)) from error

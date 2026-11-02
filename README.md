@@ -1,228 +1,111 @@
 # Gramian–Laplace on official Mamba-CL
 
-Stage-one implementation and Kaggle notebooks. **All active CPU checks pass**;
-InfSSM test5 remains DEFERRED until phase two. No benchmark training or validation
-selection has run here; the user will launch01 then02 on Kaggle.
+Current protocol: `amp_fp16_resize256_tune10_v2`. This is a new experiment relative
+to the earlier fp32/raw-image/50-epoch tuning pilot. Old Output is preserved but
+its checkpoints and validation selections are not reused in this protocol.
+Registered tiny CPU math checks pass; actual T4 speed and microbatch fit must be
+measured by the notebook. InfSSM remains DEFERRED until phase two.
 
-The supervisor corrected test1b's threshold before any training, replacing it
-with a relative comparison on the unchanged fixture and100 perturbations:
+## Kaggle notebooks
 
-| Approximation check | GL Spearman | Input-only proxy | Floor | Result |
-| --- | ---: | ---: | ---: | --- |
-| C, seed19 | .852433 | .725509 (Sigma_x tensor I) | .8 | PASS |
-| Delta, seed23 | .968065 | .950543 (Sigma_u) | .85 | PASS |
+Import01, enable Internet and Kaggle Secret `github_token`, select T4 x2 and
+attach the original defocus_mamba_large_cls_21k.pth weights. Source is cloned from
+GitHub at the exact notebook pin; no source ZIP is required. Input ImageNet-R is
+searched recursively. Renamed Inputs such as my1nonly/imagenet-r cannot identify
+the official split; the original archive is downloaded automatically when needed.
 
-Exact C/reference error1.33e-15; Q error1.67e-16; exact Delta/JVP relative
-error7.28e-16; lambda0 is bitwise identical in both tiny20-step official-optimizer
-checks. Details: `reports/section6.json` and `DECISIONS.md`.
+- **01 tuning:** GL and hybrid, independent lambda grids0.1/1/10, three tasks,
+  **10 epochs/task, LR milestones5/8**, stratified10% train holdout. GPU0 queues
+  GL; GPU1 queues hybrid. Selection maximizes validation AIA, ties favor lower lambda.
+- **02 main:** MambaCL, GL, hybrid, ten tasks, **50 epochs/task, milestones25/40**.
+  GPU0 queues baseline then hybrid; GPU1 runs GL. Attach completed01 Output,
+  including selection.json and execution_profile.json, plus required resume shards.
 
-## Local checks
+Changes shared by every arm: train/eval AMP fp16; one shared ImageNet-R cache
+resized to short side256 with PIL bicubic/JPEG quality95; persistent training
+loader workers. Main02 uses full train data. Evaluation is at task boundaries:
+validation accuracy in01, official test accuracy in02. The upstream task log can
+show1/10 in01 even though tuning stops after task3.
+
+Effective batch stays200 with one ModAdam update per effective batch. The upstream
+`expand_times=5` is retained and now explicit in effective_config.json: an epoch
+processes five augmented repeats, so throughput must count processed images,
+not unique original filenames. Original baseline freezes dt_proj; GL/hybrid
+include it, and comparison reports disclose this parameter-set difference.
+The altered AMP/resize protocol and shorter tuning cannot be claimed to reproduce
+the paper's81.67 merely because the baseline parameter set matches.
+
+## Required microbatch/throughput probe
+
+Before either01 lane starts, fresh MambaCL subprocesses on GPU0 try microbatch
+**50 →25 →10** under AMP. They try gradient checkpointing OFF first. If no candidate
+fits, they retry with it ON. The YAML USE_CHECKPOINT=True really enables
+checkpoint.checkpoint in each Mamba block; the runtime override is recorded with
+the number of checkpointed blocks in effective_config.json. Vendor source stays
+unchanged.
+
+Each successful attempt measures20 actual optimizer updates, including any AMP
+scale-adjustment attempts in timing; skipped updates are recorded. A candidate
+must retain2GiB relative to peak reserved VRAM. The largest passing microbatch is
+saved in execution_profile.json and shared by all arms and both notebooks.
+On resume that profile stays fixed. This baseline probe cannot guarantee memory
+for all future GL histories. All-OOM/insufficient-headroom results pause for review.
+Below10 images/second also pauses before tuning. Other errors are surfaced and
+are never mistaken for an OOM. The report is throughput_probe/benchmark.json;
+per-attempt logs/results and attempts.json are retained. Probe weights/optimizer
+are discarded. There is no local GPU measurement in this repository.
+
+## Precision, progress and resume
+
+Microbatch CE uses CUDA fp16 autocast and GradScaler. GL penalty and sampled-label
+statistics/Gramian/diagnostics run outside autocast in fp32. Model master weights
+remain fp32. The original evaluator receives --use_amp=True. Scaler state is
+checkpointed with optimizer/scheduler/RNG and restored before further updates.
+
+Every5 optimizer attempts the notebook prints loss (running mean CE), seconds/step,
+images/second, exposed dataloader wait, peak allocated/reserved VRAM and sampled
+GPU utilization (null when unavailable). progress.json updates after every batch;
+this is live progress, not a step checkpoint. The actual resume point remains the
+last committed epoch. Config/args/AMP/persistent-workers/checkpoint setting are
+recorded in each run's effective_config.json.
+
+Each arm retains one atomic latest.pt containing trainable parameters, all buffers,
+heads, optimizer/scheduler/scaler, RNG, labels and metrics. Frozen backbone weights
+are reconstructed from SHA256-checked pretrained weights. Static null-space/GL
+cache is stored in an immutable sidecar referenced by latest.pt, reused across
+epochs. Lossless square-matrix packing retains asymmetric IEEE bits. Old contexts
+are pruned only after latest.pt is committed. Historical GL precision summands
+are required by the method and retained. On fresh sessions they can be read from
+attached Input shards; keep every dependency listed by resume_dependencies.json.
+
+## Disk policy
+
+Venv, uv-managed Python, uv/pip cache, tar, decoded/resized images and scratch live
+under /tmp/glcl, outside /kaggle/working. Generated tar is deleted after successful
+extraction. The256 cache is reused across arms/sessions with matching local cache
+manifest. Attached images and checkpoints are never deleted. /tmp may share a
+physical filesystem; moving files alone does not guarantee free physical space.
+
+There is no periodic tar backup. Optional archive errors are nonfatal. Every30s
+heartbeat reports working-tree bytes/GiB and physical free space. Below2GiB requests
+PAUSED at an optimizer boundary, preserving the last epoch checkpoint. Atomic writes
+also reserve2GiB and enforce a16GiB Output payload ceiling. Save Output, attach it
+and all earlier dependency shards, and rerun the same notebook. Save failures pause
+rather than replacing a valid checkpoint with an incomplete file. Bootstrap cleans
+failed generated temporaries and preserves valid checkpoint/archive files.
+
+## CPU verification
 
 ```bash
 python3 -m tests.section6
-```
-
-Expected current exit code:0. Both relative comparisons and their floors are enforced. No full pytest
-or end-to-end smoke tests are part of this request.
-
-## Kaggle sessions — same source setup as H4
-
-The notebooks clone this GitHub repository using Kaggle Secret `github_token`,
-fetch the exact40-character REPO_COMMIT and verify the detached checkout.
-The official Mamba-CL source is already vendored at its pinned upstream commit.
-No source ZIP or code overlay is attached to Kaggle.
-
-1. Import `notebooks/01_tune_s0.ipynb` into Kaggle. Enable Internet and grant
-   this notebook access to your existing `github_token` secret. Select T4 x2.
-2. Attach the official `defocus_mamba_large_cls_21k.pth` weights. Dataset input
-   is optional: the notebook searches ALL files under /kaggle/input for the exact
-   official class/filenames, including nested and symlinked mounts. It can combine
-   official images across attached folders, or extract an attached original
-   `imagenet-r.tar`/ZIP. Missing/renamed filenames trigger automatic download of
-   the author's original archive (about2.19GB) with Internet ON. It then stages
-   exactly24000/6000 train/val symlinks and checks200 classes and zero overlap.
-   The Kaggle copy `my1nonly/imagenet-r` uses renamed files such as goldfish_0.jpg;
-   those cannot be matched to the repo's rendition-based split without a verified
-   mapping. The notebook never guesses by file order or makes a random split.
-   Downloaded archives and extracted original images are cached outside Output;
-   a fresh Kaggle session may download them again unless the original archive or
-   unchanged original images are attached. Renamed Input images are left untouched.
-   Leave DATA_ROOT=None for a full Input scan; set it only to restrict the search.
-   PRETRAINED is also found automatically through directory symlinks.
-3. Run All. Source clone, isolated dependencies, registered CPU checks and
-   import/GPU checks precede training. CUDA extensions are installed from the
-   official GitHub release wheels selected for Python3.11, Torch2.2.2, CUDA
-   major version and C++ ABI; source compilation is disabled. Full installation
-   output is saved to glcl_outputs/environment_install.log, with a JSON report. The first configuration cell exposes
-   REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.
-   The clone cell may be rerun safely: it leaves the source directory before
-   refreshing that checkout and keeps outputs and the environment intact.
-4. In01, GPU0 runs GL lambda0.1/1/10 and GPU1 runs hybrid lambda0.1/1/10.
-   Selection uses only the10% training holdout on the first three tasks.
-5. If PAUSED, save the Output and attach it to the SAME notebook, keeping its
-   commit, data and weights. Resume until COMPLETE. Checkpoints preserve the
-   registered horizon. Existing local checkpoints take precedence over an
-   older attached archive.
-6. After01 is COMPLETE, import `notebooks/02_main_s0.ipynb` and attach01's
-   Output containing the `glcl_outputs` tree and selection.json, plus the same
-   dataset/weights. Enable the same secret and T4 x2. GPU0 runs MambaCL then
-   hybrid; GPU1 runs GL. Stop after these seed0 stage-one runs.
-
-Both01 and02 use the SAME source commit and run tag. Only their stage and job
-queues differ. Previous Output carries results/checkpoints and validation
-selection; source always comes from GitHub. Atomic code_commit.json and stage
-protocol manifests record the actual checkout and queues. Heartbeat every30s,
-storage report every5min and an11h session deadline with checkpoint resume.
-Outputs are under `/kaggle/working/glcl/glcl_outputs`. No periodic tar copy is
-created by default; Kaggle saves the Output tree directly. Optional CLI --archive
-retains legacy archive support, with a capacity check and failed-write cleanup.
-
-To regenerate notebooks for a committed source revision already pushed to origin:
-
-```bash
-python3 scripts/build_notebooks.py --commit <full-source-commit>
-```
-
-The optional00 notebook only runs the registered CPU checks. Full-model CUDA
-execution has not been performed locally.
-
-## Code map
-
-- `glcl/math.py`: registered curvature factors and trace-form quadratics.
-- `glcl/references.py`: exact tiny references, tests/diagnostics only.
-- `glcl/statistics.py`: sampled-label metric and end-task hook collection.
-- `glcl/regularizer.py`: online anchors, decayed operator sum, disk streaming.
-- `glcl/runner.py`: pinned official pipeline, loss insertion, accumulation/resume.
-- `glcl/diagnostics.py`: measurement-only GL/KFAC/EWC/input-proxy comparisons.
-- `glcl/select.py`: validation-only lambda selection with identity checks.
-- `glcl/kaggle.py`: two-lane launcher, direct Output restore and deadline handling.
-- `scripts/install_cuda_extensions.py`: official wheel selection and binary-only
-  installation, preserving Torch/dependencies and saving full install diagnostics.
-- `scripts/prepare_imagenet_r.py`: full Input filename search, safe archive
-  extraction, original-dataset download fallback and exact official split staging;
-  preparation provenance is included in Output metadata.
-- `PREREGISTRATION.md`: claims and selection rules registered before training.
-
-## Live metrics and resume
-
-Both01 and02 checkpoint each epoch and evaluated task, including optimizer,
-scheduler, RNG, stored heads/projectors and GL state. Attach the previous Output
-and rerun the same stage. An interrupted epoch is repeated from its latest
-checkpoint; the registered task/epoch horizon is preserved.
-
-Both01 and02 follow existing console logs and print epoch loss/train_acc,
-per-task evaluation accuracy/forgetting, final AA/AIA and timing. The snapshot is
-`glcl_outputs/performance_latest.json`. Tuning validation accuracy uses the10%
-training holdout and is evaluated at task boundaries. Main02 reports test_acc;
-there is no extra validation set or per-epoch validation call.
-
-### Storage repair and old checkpoints
-
-The reported PytorchStreamWriter failures follow a prior ENOSPC archive error.
-The notebooks now retain only trainable parameter patterns plus all model buffers
-in each epoch checkpoint. Frozen parameters are reconstructed from the same
-SHA256-checked pretrained weights. Optimizer, scheduler, RNG, stored heads,
-labels and metrics remain checkpointed. Task caches/GL anchors live in a separate
-immutable context reused across epochs. Large square caches use lossless bit
-packing: upper triangle plus XOR residual for the lower triangle, byte shuffled
-and compressed. Asymmetric rounding, signed zeros and NaN payloads are retained;
-there is no precision reduction or change to the training formulas.
-
-Environment/download caches and staged images use `/tmp/glcl`, outside
-saved Output. This location may share the physical disk: moving files avoids
-Output quota use, but does not promise additional physical capacity. The redundant
-downloaded ImageNet-R tar is removed only after all original images are verified.
-
-Before refreshing the source checkout, a stdlib-only preflight removes generated
-failed `.pt.tmp`/`.json.tmp` and partial archive files. A complete newer temporary
-checkpoint is promoted only after ZIP CRC validation; existing latest.pt and
-valid old archives are retained. It refuses cleanup while an old GL worker or
-launcher is active. Stop the failed run before running the new notebook.
-
-Writes share a cross-process lock. Capacity guards preserve2GiB free disk and a
-conservative16GiB saved-Output payload ceiling. Insufficient capacity pauses with
-exit75, retaining the last committed checkpoint. The failed write is cleaned up.
-Save that Output, attach it in a fresh session, then rerun the same notebook.
-Immutable contexts/curvature remain on attached Inputs rather than being copied
-into every new Output. Keep **all earlier Output shards named by each run's
-resume_dependencies.json** attached; a later shard need not be self-contained.
-
-The exact pre-fix source digest is explicitly allowed for migration; config,
-arm, strength, seed, dataset manifest and pretrained hash must still match.
-The new notebooks restore the highest task/epoch from direct Output trees or
-standalone downloaded `.pt` checkpoints (even renamed). Same-session local valid
-checkpoints take precedence. Legacy single tar archives remain supported, but
-only contain the state at their own backup time. Epoch2 cannot be recovered from
-an incomplete epoch2 write; a valid epoch1 latest.pt resumes after epoch1.
-A startup-only archive resumes from epoch0. Completed-task resume also restores
-RNG before initializing the next head.
-
-Reproduce storage-only checks on a CPU machine with sufficient disk:
-
-```bash
+python3 -m tests.amp_protocol
+python3 -m tests.step_telemetry
 python3 -m tests.storage_resume
 python3 -m tests.storage_bootstrap
 ```
 
-These exercise a tiny model and fault injection, not full Mamba training.
-
-## Step telemetry and mandatory01 throughput gate
-
-Before launching either01 tuning lane, an isolated process runs exactly20 actual
-MambaCL optimizer steps on GPU0, with the official frozen dt_proj parameter set,
-effective batch200, microbatch5, AutoAugment and2 dataloader workers. Steps can
-span epochs; there is no excluded warmup. This process never writes a training
-checkpoint or selection and its updated weights/optimizer are discarded. The
-report is `glcl_outputs/throughput_probe/benchmark.json` and prints directly in
-the notebook. It records seconds/step, actual images/second and exposed loader
-wait fraction. Below10 images/second produces SLOW/exit75 and blocks tuning;
-manual launch and the launcher also validate the gate against source/config,
-dataset and pretrained hashes. A new01 Run All measures again.
-
-Every10 optimizer steps, both01 and02 print STEP_METRICS with mean seconds/step,
-images/second, dataloader wait seconds/fraction, peak allocated/reserved GPU memory
-and GPU utilization averaged from nvidia-smi samples collected about once/second.
-Unavailable utilization is null, not a fabricated zero. GPU operations are
-synchronized for timing. Timings include exposed loader startup/wait and model
-compute/update, excluding setup/checkpoint/progress-file writes. Peak memory is
-since the worker's first training step; step counts restart with each worker.
-progress.json updates each completed optimizer step, but **is not a step-level
-checkpoint**: PAUSED during an epoch resumes from the last committed epoch.
-
-The benchmark reports suspected loader pressure when exposed wait is at least20%
-of measured step time. Smaller waits indicate compute dominates the single-worker
-probe, but do not rule out CPU contention in two concurrent training processes.
-The registered workers/AutoAugment are unchanged so the probe and subsequent
-per-arm live telemetry can assess the4-CPU concern without changing data transforms.
-
-Every30-second heartbeat reports bytes/GiB used under /kaggle/working and physical
-free space. Below2GiB requests PAUSED; workers check at optimizer-step boundaries
-and retain their last committed checkpoint. Write reservations also retain2GiB.
-Venv, uv-managed Python, uv/pip cache, temporary files, downloaded dataset tar and
-extracted images are under /tmp/glcl. Generated tar is deleted immediately after
-successful extraction. /tmp may still share the physical disk with /kaggle/working;
-both physical capacity and saved-Output quota are guarded.
-
-CPU-only verification additionally runs `python3 -m tests.step_telemetry`.
-Actual20-step MambaCL throughput and the loader diagnosis require the Kaggle GPU
-session; no local CPU fixture is reported as a GPU measurement.
-
-## Interpretation and remaining validation
-
-Official source is pinned at
-`0ebac10c600ca7179174e2fa9bf2036218d48dba`. Each generated notebook pins the
-project source commit in its first configuration cell and logs the resolved
-commit to code_commit.json; source/config digests also protect resume identity.
-
-The official baseline freezes dt_proj; GL/hybrid include it to implement the
-requested Delta factors. The user confirmed keeping this original baseline
-parameter set. comparison.csv and comparison.md report both dt_proj weight/bias
-status and each run's recorded training patterns, and explicitly disclose this
-parameter-set difference. Matching the parameter set does not guarantee AA81.67.
-RoPE/group normalization are retained and handled in statistics. No phase-two
-training methods, extra seeds or CIFAR runs are queued.
-
-CUDA installation, T4 VRAM, actual throughput, full-model hooks/resume and diagnostic
-cost have not been exercised. Exact online operator summands can consume tens of GB
-per arm and substantial disk I/O. The schedule is prepared for2×T4; it is not a
-measured optimum. Do not interpret these notebooks as successful experiment results.
+Local storage tests used GL_MIN_FREE_BYTES=16777216 only because the local disk
+itself is nearly full; production remains2GiB. No full pytest suite or local
+Mamba/CUDA benchmark is run. C relative rho=.852433>.725509; Delta=.968065>.950543;
+exact-reference and lambda0 tiny tests pass. See reports/section6.json,
+reports/amp_protocol.json and DECISIONS.md for scope and remaining limitations.

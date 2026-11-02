@@ -23,7 +23,7 @@
     40
   ],
   "batch_size": 200,
-  "microbatch": 5,
+  "microbatch": 50,
   "workers": 2,
   "eval_workers": 1,
   "eval_batch_size": 10,
@@ -43,5 +43,21 @@
     "x_proj",
     "out_proj.weight",
     "A_log"
-  ]
+  ],
+  "protocol": "amp_fp16_resize256_tune10_v2",
+  "use_amp": true,
+  "microbatch_candidates": [
+    50,
+    25,
+    10
+  ],
+  "use_checkpoint": false,
+  "persistent_workers": true,
+  "resize_short_side": 256,
+  "tune_epochs": 10,
+  "tune_decay_milestones": [
+    5,
+    8
+  ],
+  "expand_times": 5
 }

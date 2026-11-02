@@ -51,6 +51,19 @@ def restore(inputs, working):
         return
     if len(choices) != 1:
         raise RuntimeError('Attach exactly one previous Output archive')
+    # Reject old fp32 backups before decompressing their multi-GB checkpoints.
+    accepted=False
+    with tarfile.open(choices[0],mode='r|gz') as preview:
+        for member in preview:
+            if Path(member.name).name.startswith('notebook_protocol_') and member.size<1024**2:
+                metadata=json.loads(preview.extractfile(member).read())
+                accepted=metadata.get('experiment_protocol')=='amp_fp16_resize256_tune10_v2'
+                break
+            if member.name.endswith('.pt'):
+                break
+    if not accepted:
+        print('Old fp32 backup preserved on Input; new AMP/resize protocol starts fresh.',flush=True)
+        return
     with tarfile.open(choices[0]) as tar:
         for member in tar.getmembers():
             path = Path(member.name)

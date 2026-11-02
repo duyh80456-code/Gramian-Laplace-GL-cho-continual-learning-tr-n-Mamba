@@ -51,6 +51,14 @@ OUTPUT = RUN_ROOT / 'glcl_outputs'
 ROOT_OUT = OUTPUT
 subprocess.run([sys.executable, '-c', STORAGE_PREFLIGHT, '--working', str(RUN_ROOT),
                 '--ephemeral', str(EPHEMERAL), '--repo', str(REPO)], cwd=WORKING, check=True)
+# This scientific protocol must not overwrite or resume old fp32 experiments.
+if (OUTPUT/'tune').exists() or (OUTPUT/'main').exists():
+    identities=list(OUTPUT.glob('*/*/identity.json'))
+    if any(json.loads(p.read_text()).get('config',{}).get('protocol') != 'amp_fp16_resize256_tune10_v2' for p in identities):
+        previous=RUN_ROOT/('glcl_outputs_before_amp_'+str(int(time.time())))
+        OUTPUT.rename(previous)
+        print('Preserved old protocol Output at:',previous)
+OUTPUT.mkdir(parents=True,exist_ok=True)
 
 def atomic_json(value, path):
     path = Path(path)
@@ -130,7 +138,12 @@ subprocess.run(prepare, env=ENV, check=True)
 prepared = json.loads(DATA_REPORT.read_text())
 if prepared['status'] != 'PASSED':
     raise RuntimeError('ImageNet-R preparation failed; training blocked')
-DATA_ROOT = prepared['data_dir']
+RAW_DATA_ROOT = prepared['data_dir']
+DATA_ROOT = str(EPHEMERAL/'input_data'/'imagenet_r_resized256')
+subprocess.run([PYTHON,'scripts/resize_imagenet_r.py','--source',RAW_DATA_ROOT,
+                '--destination',DATA_ROOT],env=ENV,check=True)
+prepared.update(training_data_dir=DATA_ROOT,resize=json.loads((Path(DATA_ROOT)/'resize_manifest.json').read_text()))
+atomic_json(prepared,DATA_REPORT)
 if PRETRAINED is None:
     PRETRAINED = subprocess.check_output(
         [PYTHON, 'scripts/prepare_imagenet_r.py', '--find-checkpoint', '/kaggle/input'],
@@ -147,6 +160,7 @@ if probe_result.returncode != 0:
     raise RuntimeError('01 is PAUSED before tuning: inspect throughput_probe/benchmark.json and benchmark output. Below10 images/s requires review.')
 '''
 launch = '''
+ENV['GL_EXECUTION_PROFILE']=str(OUTPUT/'execution_profile.json')
 # Also enforce the gate here if this launch cell is run manually.
 if STAGE == 'tune':
     subprocess.run([PYTHON, 'scripts/benchmark_throughput.py', '--verify-only',
@@ -156,7 +170,7 @@ DEADLINE = SESSION_START + 11*3600  # includes environment setup; 5-min hard gra
 jobs_path = RUN_ROOT/'effective_jobs'/f'{STAGE}.json'
 atomic_json(JOBS, jobs_path)
 atomic_json(dict(run_tag=RUN_TAG, stage=STAGE, seed=0, source_commit=CODE_COMMIT,
-                 jobs=JOBS, workers=2, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1,
+                 jobs=JOBS, experiment_protocol='amp_fp16_resize256_tune10_v2', workers=2, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1,
                  performance_observer_sha256=globals().get('PERFORMANCE_OBSERVER_SHA256'),
                  protocol='Full registered horizon; exit75 resumes without truncation'),
             OUTPUT/f'notebook_protocol_{STAGE}.json')
@@ -183,9 +197,9 @@ for name, stage, title, description in [
     ('00_section6', 'tests', 'Section 6 — CPU float64 gate',
      'Only the registered CPU checks. Exact references and relative comparisons run again. InfSSM remains DEFERRED until phase two.'),
     ('01_tune_s0', 'tune', 'Validation tuning — seed 0',
-     'GPU0: GL lambda0.1,1,10. GPU1: MambaCL+GL lambda0.1,1,10. Each candidate uses the first three tasks, 50 epochs, stratified10% training holdout. Max validation AIA, ties use smaller lambda. Repeat with previous Output until COMPLETE.'),
+     'GPU0: GL lambda0.1,1,10. GPU1: MambaCL+GL lambda0.1,1,10. Each candidate uses the first three tasks, 10 epochs (LR milestones5/8), stratified10% training holdout. Max validation AIA, ties use smaller lambda. Repeat with previous Output until COMPLETE.'),
     ('02_main_s0', 'main', 'Full ImageNet-R 10-split — seed 0',
-     'Attach completed01 Output containing selection.json. If01 is PAUSED, resume01 first. GPU0: MambaCL then MambaCL+GL; GPU1: GL. Full10 tasks x50 epochs, effective batch200, microbatch5. Main runs start from pretrained weights and use full training data. Stop after seed0 stage one.')]:
+     'Attach completed01 Output containing selection.json. If01 is PAUSED, resume01 first. GPU0: MambaCL then MambaCL+GL; GPU1: GL. Full10 tasks x50 epochs, effective batch200, AMP fp16; shared measured microbatch50/25/10. Main runs start from pretrained weights and use full training data. Stop after seed0 stage one.')]:
     if args.stage and stage not in args.stage:
         continue
     if stage == 'main':
@@ -217,7 +231,7 @@ SESSION_START = time.time()
         stage_launch = stage_launch.replace(
             'result = subprocess.run(command, env=ENV)',
             "observer = [PYTHON, '-u', '-c', PERFORMANCE_OBSERVER, '--root', str(OUTPUT), '--jobs', str(jobs_path), '--', *command]\nresult = subprocess.run(observer, env=ENV)")
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nEvery10 optimizer steps, live output shows throughput, peak VRAM, GPU utilization and exposed dataloader wait. progress.json updates each step; resume still uses the last committed epoch. Heartbeats show /kaggle/working usage and request PAUSED below2GiB free. Before01 launches either lane, an isolated20-step MambaCL probe on GPU0 must reach10 images/s; slower results stop for review. CPU checks pass; actual GPU throughput remains to be measured on Kaggle.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nEvery5 optimizer steps, live output shows throughput, peak VRAM, loss, GPU utilization and exposed dataloader wait. progress.json updates each step; resume still uses the last committed epoch. Heartbeats show /kaggle/working usage and request PAUSED below2GiB free. Before01 launches either lane, an isolated20-step MambaCL probe on GPU0 must reach10 images/s; slower results stop for review. CPU checks pass; actual GPU throughput remains to be measured on Kaggle.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
         cells += [cell('code', restore), cell('code', kernel_install)]
