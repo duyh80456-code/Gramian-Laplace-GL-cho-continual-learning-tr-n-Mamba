@@ -32,30 +32,86 @@ def official_lists():
     return splits, classes, hashes
 
 
+def walk_inputs(search_root, errors):
+    """Follow Kaggle directory aliases once, including symlinks, without cycles."""
+    visited = set()
+    def onerror(error):
+        if len(errors) < 10:
+            errors.append(str(error))
+    for directory, dirs, files in os.walk(search_root, followlinks=True, onerror=onerror):
+        path = Path(directory)
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            onerror(error)
+            dirs[:] = []
+            continue
+        if resolved in visited:
+            dirs[:] = []
+            continue
+        visited.add(resolved)
+        dirs.sort()
+        yield path, dirs, files
+
+
+def input_inventory(search_root):
+    """Small mount listing for an actionable error, not a dump of image names."""
+    entries = []
+    for path in sorted(Path(search_root).iterdir())[:12]:
+        entry = dict(path=str(path), directory=path.is_dir(), symlink=path.is_symlink())
+        if path.is_dir():
+            try:
+                entry['children'] = sorted(p.name for p in path.iterdir())[:12]
+            except OSError as error:
+                entry['error'] = str(error)
+        entries.append(entry)
+    return entries
+
+
 def discover(search_root, splits, classes):
-    """Find either a raw class tree or an already split tree, pruning images."""
-    search_root = Path(search_root).resolve()
+    """Identify layout first; validate ALL required files separately afterward."""
+    search_root = Path(search_root).absolute()
     if not search_root.is_dir():
         raise FileNotFoundError('Dataset search root not found: ' + str(search_root))
     candidates = {}
-    probe = splits['train'][0]
-    for directory, dirs, files in os.walk(search_root):
-        path = Path(directory)
+    errors = []
+    for path, dirs, files in walk_inputs(search_root, errors):
         directories = set(dirs)
-        if {'train', 'val'} <= directories and (path / 'train' / probe).is_file():
-            candidates[path] = 'split'
+        split_classes = set()
+        if {'train', 'val'} <= directories:
+            for mode in ('train', 'val'):
+                split_classes.update(p.name for p in (path / mode).iterdir() if p.is_dir())
+        if split_classes & classes:
+            candidates[path.resolve()] = (path, 'split')
             dirs[:] = []
-        elif classes <= directories and (path / probe).is_file():
+        elif classes & directories:
             # Do not treat train/val children of a split dataset as raw roots.
             if path.name in ('train', 'val') and (path.parent / 'train').is_dir() and (path.parent / 'val').is_dir():
-                candidates[path.parent] = 'split'
+                candidates[path.parent.resolve()] = (path.parent, 'split')
             else:
-                candidates[path] = 'raw'
+                candidates[path.resolve()] = (path, 'raw')
             dirs[:] = []
     if len(candidates) != 1:
-        choices = ', '.join(str(path) for path in sorted(candidates)) or 'none'
-        raise ValueError('Expected one ImageNet-R source; set DATA_ROOT explicitly. Found: ' + choices)
-    return next(iter(candidates.items()))
+        details = dict(search_root=str(search_root),
+                       candidates=[str(source) for source, kind in candidates.values()],
+                       mounts=input_inventory(search_root), walk_errors=errors)
+        raise ValueError('Expected one raw ImageNet-R class root or official train/val root. '
+                         'Attach the ImageNet-R dataset, or set DATA_ROOT to its exact directory. '
+                         'Input diagnostics: ' + json.dumps(details))
+    return next(iter(candidates.values()))
+
+
+def find_checkpoint(search_root):
+    errors, choices = [], {}
+    for path, dirs, files in walk_inputs(search_root, errors):
+        if 'defocus_mamba_large_cls_21k.pth' in files:
+            checkpoint = path / 'defocus_mamba_large_cls_21k.pth'
+            choices[checkpoint.resolve()] = checkpoint
+    if len(choices) != 1:
+        raise ValueError('Expected one defocus_mamba_large_cls_21k.pth; set PRETRAINED explicitly. '
+                         + json.dumps(dict(candidates=[str(p) for p in choices.values()],
+                                           mounts=input_inventory(search_root), walk_errors=errors)))
+    return next(iter(choices.values()))
 
 
 def validate_split(root, splits, classes):
@@ -135,9 +191,15 @@ def prepare(search_root, destination, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', default='/kaggle/input', help='Raw or split root; auto-discovery searches beneath it')
-    parser.add_argument('--stage', required=True, help='Writable destination for official split symlinks')
-    parser.add_argument('--report', required=True)
+    parser.add_argument('--stage', help='Writable destination for official split symlinks')
+    parser.add_argument('--report')
+    parser.add_argument('--find-checkpoint', metavar='SEARCH_ROOT', help='Locate checkpoint through Kaggle directory symlinks')
     args = parser.parse_args()
+    if args.find_checkpoint:
+        print(find_checkpoint(args.find_checkpoint))
+        return
+    if not args.stage or not args.report:
+        parser.error('--stage and --report are required for data preparation')
     prepare(args.input, args.stage, args.report)
 
 

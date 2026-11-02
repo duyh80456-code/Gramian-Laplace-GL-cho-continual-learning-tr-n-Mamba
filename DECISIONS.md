@@ -172,3 +172,20 @@ idempotent, and stale staging symlinks can be reattached to the current mount.
 The preparation report, source root and official split hashes are archived with
 results, but staged images/symlinks stay outside glcl_outputs and its archive.
 This preparation does not decode images or run the training model.
+
+### Input discovery fix after Kaggle Found:none
+
+The first scanner used os.walk's default followlinks=False and identified a raw
+root only if ALL200 class directories plus one particular probe image existed.
+That could skip a directory-symlink mount entirely, or hide an incomplete or
+mismatched dataset behind the same unhelpful Found:none message. The received
+traceback alone does not establish which condition occurred on the user's mount.
+
+Discovery now follows directory aliases with canonical-path deduplication and
+cycle protection. It recognizes class-root layout independently of a single
+probe filename; the existing all-file/class/split validation then reports missing
+or mismatched files explicitly. No split or training formula changed. Empty or
+ambiguous discovery prints a bounded mount listing and filesystem errors. The
+checkpoint finder uses the same symlink-aware walk instead of Path.rglob.
+A temporary filesystem reproduction covers directory aliases, duplicate aliases,
+cycles, an incomplete source and checkpoint discovery; no model was executed.

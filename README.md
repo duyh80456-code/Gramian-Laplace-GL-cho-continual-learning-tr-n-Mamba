@@ -43,6 +43,9 @@ No source ZIP or code overlay is attached to Kaggle.
    prepared split is accepted only if its file membership matches those lists.
    DATA_ROOT may point to a raw root or a split root; leave it None for discovery.
    Set PRETRAINED explicitly only if checkpoint auto-discovery is ambiguous.
+   Discovery follows Kaggle directory symlinks, deduplicates aliases and avoids
+   cycles. Failure to find a source prints mount diagnostics; missing images are
+   reported separately instead of being hidden as an unrecognized layout.
 3. Run All. Source clone, isolated dependencies, registered CPU checks and
    import/GPU checks precede training. The first configuration cell exposes
    REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.

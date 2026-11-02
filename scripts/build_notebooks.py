@@ -118,10 +118,9 @@ if prepared['status'] != 'PASSED':
     raise RuntimeError('ImageNet-R preparation failed; training blocked')
 DATA_ROOT = prepared['data_dir']
 if PRETRAINED is None:
-    candidates = list(Path('/kaggle/input').rglob('defocus_mamba_large_cls_21k.pth'))
-    if len(candidates) != 1:
-        raise RuntimeError('Attach official pretrained weights or set PRETRAINED')
-    PRETRAINED = str(candidates[0])
+    PRETRAINED = subprocess.check_output(
+        [PYTHON, 'scripts/prepare_imagenet_r.py', '--find-checkpoint', '/kaggle/input'],
+        env=ENV, text=True).strip()
 print('Data:', DATA_ROOT, 'Weights:', PRETRAINED)
 '''
 launch = '''
