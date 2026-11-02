@@ -22,6 +22,7 @@ for file in sorted(root.rglob('summary.json')):
     identity_path = file.parent / 'identity.json'
     identity = json.loads(identity_path.read_text()) if identity_path.exists() else {}
     config = identity.get('config', {})
+    row['backbone']=config.get('backbone','large')
     key = 'baseline_training_string' if r.get('arm') == 'MambaCL' else 'training_string'
     patterns = config.get(key)
     # Read the recorded configuration of each run, not today's working config.
@@ -37,6 +38,9 @@ for file in sorted(root.rglob('summary.json')):
     row['parameter_set_note'] = PARAMETER_SET_NOTE
     rows.append(row)
 
+paper_note=('Base classification backbone: different architecture/pretraining from the paper large21K reference; AA81.67 is not a base reproduction target.'
+            if any(row.get('backbone')=='base' for row in rows) else
+            'Paper large21K references: AA81.67%, forgetting4.07%; reference numbers, not measured results or a stopping gate.')
 if rows:
     path = root / 'comparison.csv'
     with path.open('w') as f:
@@ -45,9 +49,7 @@ if rows:
         writer.writerows(rows)
     lines = [
         '# Stage-one results', '', PARAMETER_SET_NOTE, '',
-        'The official baseline parameter set is retained for the reproduction '
-        'measurement. Paper references: AA81.67%, forgetting4.07%; these are '
-        'reference numbers, not measured results or a stopping gate.', '',
+        paper_note, '',
         'Trainable scopes below come from each run\'s recorded identity.json. '
         'UNKNOWN means the original configuration is missing; no scope is inferred.', '',
         '| Arm | Seed | Stage | AA (%) | AIA (%) | Forgetting (%) | dt_proj weight | dt_proj bias | Training patterns |',
@@ -60,5 +62,5 @@ if rows:
     print(path)
     print(root / 'comparison.md')
 else:
-    print('No completed runs. Paper MambaCL reference: AA81.67%, forgetting4.07%; not a reproduction gate.')
+    print('No completed runs; no measured accuracy yet.')
     print(PARAMETER_SET_NOTE)

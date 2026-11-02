@@ -109,3 +109,24 @@ itself is nearly full; production remains2GiB. No full pytest suite or local
 Mamba/CUDA benchmark is run. C relative rho=.852433>.725509; Delta=.968065>.950543;
 exact-reference and lambda0 tiny tests pass. See reports/section6.json,
 reports/amp_protocol.json and DECISIONS.md for scope and remaining limitations.
+
+## Base classification variant of01
+
+`notebooks/01_tune_base_s0.ipynb` repeats01 with the24-block/768-hidden
+De-focus Mamba Base classifier. Attach `defocus_mamba_base_cls.pth`; the notebook
+finds this exact filename recursively. It rejects missing/mismatched backbone
+weights and tolerates only the unused auxiliary head from classification pretraining.
+GL/hybrid still tune0.1/1/10 over3 tasks x10 epochs on2 T4s. Output is separate:
+`/kaggle/working/glcl_base/glcl_outputs`. The measured execution profile and resume
+identity include the backbone; do not reuse large selections/checkpoints. Existing
+large notebook source pins are unchanged. Base is a different backbone/pretraining
+experiment from the paper's large21K result.
+
+Regenerate only this notebook from a committed source revision:
+
+```bash
+python3 scripts/build_notebooks.py --backbone base --stage tune --commit <full-source-commit>
+```
+
+Run `python3 -m tests.base_variant` for CPU-only routing/restore checks; actual
+base checkpoint loading, GPU memory and throughput still require Kaggle.

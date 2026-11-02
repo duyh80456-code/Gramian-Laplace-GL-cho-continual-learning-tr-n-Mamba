@@ -10,6 +10,7 @@ import textwrap
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--stage', action='append', choices=['tests', 'tune', 'main'], help='Generate only selected notebook stages; default: all')
+parser.add_argument('--backbone',choices=['large','base'],default='large')
 parser.add_argument('--commit', help='Immutable source commit available on origin; defaults to local HEAD')
 args = parser.parse_args()
 pin = args.commit or subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
@@ -32,7 +33,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from kaggle_secrets import UserSecretsClient
 
-os.environ.update(TQDM_DISABLE='1', PYTHONUNBUFFERED='1',
+os.environ.update(GL_BACKBONE=BACKBONE, TQDM_DISABLE='1', PYTHONUNBUFFERED='1',
                   PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION='python')
 MAIN_URL = 'https://github.com/duyh80456-code/Gramian-Laplace-GL-cho-continual-learning-tr-n-Mamba.git'
 WORKING = Path('/kaggle/working')
@@ -146,7 +147,7 @@ prepared.update(training_data_dir=DATA_ROOT,resize=json.loads((Path(DATA_ROOT)/'
 atomic_json(prepared,DATA_REPORT)
 if PRETRAINED is None:
     PRETRAINED = subprocess.check_output(
-        [PYTHON, 'scripts/prepare_imagenet_r.py', '--find-checkpoint', '/kaggle/input'],
+        [PYTHON, 'scripts/prepare_imagenet_r.py', '--find-checkpoint', '/kaggle/input', '--checkpoint-name', CHECKPOINT_NAME],
         env=ENV, text=True).strip()
 print('Data:', DATA_ROOT, 'Weights:', PRETRAINED)
 '''
@@ -200,6 +201,12 @@ for name, stage, title, description in [
      'GPU0: GL lambda0.1,1,10. GPU1: MambaCL+GL lambda0.1,1,10. Each candidate uses the first three tasks, 10 epochs (LR milestones5/8), stratified10% training holdout. Max validation AIA, ties use smaller lambda. Repeat with previous Output until COMPLETE.'),
     ('02_main_s0', 'main', 'Full ImageNet-R 10-split — seed 0',
      'Attach completed01 Output containing selection.json. If01 is PAUSED, resume01 first. GPU0: MambaCL then MambaCL+GL; GPU1: GL. Full10 tasks x50 epochs, effective batch200, AMP fp16; shared measured microbatch50/25/10. Main runs start from pretrained weights and use full training data. Stop after seed0 stage one.')]:
+    if args.backbone=='base' and stage!='tune':
+        continue
+    if args.backbone=='base':
+        name='01_tune_base_s0'
+        title+=' — De-focus Mamba Base classification'
+        description+=' Attach defocus_mamba_base_cls.pth;24 blocks, hidden768, intermediate1536. Output/profile are separate from large. This is not the large21K-pretrained paper backbone.'
     if args.stage and stage not in args.stage:
         continue
     if stage == 'main':
@@ -212,9 +219,11 @@ for name, stage, title, description in [
                 [dict(name='GL', arm='GL', stage=stage)]]
     else:
         jobs = [[], []]
-    config = f"""BRANCH = 'GL'
+    config = f"""BACKBONE = {args.backbone!r}
+CHECKPOINT_NAME = {'defocus_mamba_base_cls.pth' if args.backbone=='base' else 'defocus_mamba_large_cls_21k.pth'!r}
+BRANCH = 'GL'
 REPO_COMMIT = {pin!r}
-RUN_TAG = {'glcl_imagenetr_s0_' + pin[:12]!r}
+RUN_TAG = {'glcl_imagenetr_'+args.backbone+'_s0_' + pin[:12]!r}
 STAGE = {stage!r}
 DATA_ROOT = None  # optional raw OR official train/val root; auto-discovered under /kaggle/input
 PRETRAINED = None  # optional explicit path to defocus_mamba_large_cls_21k.pth
@@ -238,6 +247,17 @@ SESSION_START = time.time()
         if stage == 'tune':
             cells += [cell('code', benchmark)]
         cells += [cell('code', stage_launch), cell('code', report)]
+    if args.backbone=='base':
+        replacements={
+            '/kaggle/working/gramian-laplace':'/kaggle/working/gramian-laplace-base',
+            '/kaggle/working/glcl':'/kaggle/working/glcl_base',
+            'amp_fp16_resize256_tune10_v2':'amp_fp16_resize256_tune10_base_v2',
+            'optional explicit path to defocus_mamba_large_cls_21k.pth':'optional explicit path to defocus_mamba_base_cls.pth'}
+        for item in cells:
+            body=''.join(item['source'])
+            for before,after in replacements.items():body=body.replace(before,after)
+            item['source']=body.splitlines(keepends=True)
+            item['id']=hashlib.sha256(body.encode()).hexdigest()[:12]
     notebook = dict(cells=cells, metadata=dict(kernelspec=dict(display_name='Python 3', language='python', name='python3'),
                     language_info=dict(name='python', version='3.11'), kaggle=dict(accelerator='nvidiaTeslaT4', isInternetEnabled=True, language='python', sourceType='notebook')), nbformat=4, nbformat_minor=5)
     path = ROOT/'notebooks'/f'{name}.ipynb'

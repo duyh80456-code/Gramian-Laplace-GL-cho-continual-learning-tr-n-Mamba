@@ -57,7 +57,7 @@ def restore(inputs, working):
         for member in preview:
             if Path(member.name).name.startswith('notebook_protocol_') and member.size<1024**2:
                 metadata=json.loads(preview.extractfile(member).read())
-                accepted=metadata.get('experiment_protocol')=='amp_fp16_resize256_tune10_v2'
+                accepted=metadata.get('experiment_protocol')==__import__('glcl.configuration',fromlist=['load_config']).load_config('tune')['protocol']
                 break
             if member.name.endswith('.pt'):
                 break
@@ -217,7 +217,8 @@ def main():
     args = p.parse_args()
     from .io import ROOT, require_tests
     require_tests()
-    config = json.loads((ROOT / 'configs/phase1.json').read_text())
+    from .configuration import load_config
+    config = load_config(args.stage)
     selection = Path(args.root) / 'selection.json'
     if args.stage == 'tune':
         from scripts.benchmark_throughput import verify

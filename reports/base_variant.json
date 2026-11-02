@@ -1,0 +1,42 @@
+{
+  "status": "CPU_CHECKS_PASS",
+  "gpu_status": "PENDING_KAGGLE_PROBE",
+  "backbone": "defocus_mamba_base",
+  "checkpoint": "defocus_mamba_base_cls.pth",
+  "architecture": {
+    "depth": 24,
+    "hidden_size": 768,
+    "intermediate_size": 1536
+  },
+  "notebook": "01_tune_base_s0.ipynb",
+  "tuning": {
+    "tasks": 3,
+    "epochs": 10,
+    "decay_milestones": [
+      5,
+      8
+    ],
+    "lambda_grid": [
+      0.1,
+      1,
+      10
+    ],
+    "arms": [
+      "GL",
+      "MambaCL+GL"
+    ],
+    "gpus": 2
+  },
+  "checks": [
+    "config/profile hash separation",
+    "checkpoint filename lookup",
+    "checkpoint header backbone field",
+    "cross-backbone checkpoint and root metadata restore isolation",
+    "registered section-six CPU math"
+  ],
+  "limitations": [
+    "No full-model build or actual pretrained base checkpoint load locally",
+    "No T4 VRAM fit or throughput measurement locally",
+    "Different backbone/pretraining from paper large21K result"
+  ]
+}

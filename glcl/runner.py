@@ -384,7 +384,7 @@ class Runtime:
         cfg = self.config
         sys.argv = ['train_eval.py', '-d', cfg['dataset'], '--data_root', self.args.data_root,
                     '--pretrained_path', self.args.pretrained, '--seed', '0', '--null_eta', str(cfg['null_eta']),
-                    '--epochs', str(cfg['epochs']), '--decay_milestones', *map(str, cfg['decay_milestones']),
+                    '--model',cfg.get('model_name','defocus_mamba_large'), '--epochs', str(cfg['epochs']), '--decay_milestones', *map(str, cfg['decay_milestones']),
                     '--batch_size', str(cfg['batch_size']), '--workers', str(cfg['workers']),
                     '--eval_workers', str(cfg['eval_workers']), '--eval_batch_size', str(cfg['eval_batch_size']),
                     '--expand_times',str(cfg['expand_times']), '--use_amp', str(cfg['use_amp']), '--persistent_workers', str(cfg['persistent_workers']),
@@ -406,7 +406,7 @@ class Runtime:
             self.split_validation(gvm)
         gvm.cache_dict['exp_start_time'] = time.time()
         official.GVM = gvm
-        model_config=official.get_config(str(ROOT / 'upstream/mamba-cl/utils/defocus_mamba_large_22k.yaml'))
+        model_config=official.get_config(str(ROOT / cfg.get('model_config','upstream/mamba-cl/utils/defocus_mamba_large_22k.yaml')))
         model_config.defrost()
         model_config.TRAIN.USE_CHECKPOINT=cfg['use_checkpoint']
         model_config.freeze()
@@ -414,7 +414,15 @@ class Runtime:
         atomic_json(dict(config=cfg, args=vars(args), gradient_checkpointing=cfg['use_checkpoint'],
                          checkpointed_blocks=sum(bool(getattr(m,'use_checkpoint',False)) for m in model.modules())), self.out/'effective_config.json')
         checkpoint = torch.load(args.pretrained_path, map_location='cpu')
-        result = model.load_state_dict(checkpoint['model'], strict=False)
+        weights=checkpoint['model']
+        result = model.load_state_dict(weights, strict=False)
+        if cfg.get('backbone')=='base':
+            # Original base classification checkpoint includes an unused auxiliary
+            # head. CL uses the same single-head policy as large01.
+            missing=[name for name in result.missing_keys]
+            unexpected=[name for name in result.unexpected_keys if not name.startswith('head2.')]
+            if missing or unexpected:
+                raise RuntimeError('Base checkpoint does not match classification backbone: '+str(dict(missing=missing,unexpected=unexpected)))
         atomic_json(dict(missing=result.missing_keys, unexpected=result.unexpected_keys), self.out / 'pretrained_keys.json')
         setattr(model, 'pretrained_cfg', dict(pretrained_path=args.pretrained_path))
         model.reload_params()
@@ -475,7 +483,9 @@ class Runtime:
                        accuracy_matrix=gvm.acc_mat_dict['AccClassIncMat'][:stop_task, :stop_task].tolist(),
                        gpu_hours=(self.elapsed + time.monotonic() - self.started) / 3600,
                        statistics_floats=self.gl.floats(), reimplemented=False,
-                       preliminary=True, paper_AA=81.67, paper_forgetting=4.07)
+                       preliminary=True, backbone=cfg.get('backbone','large'),
+                       paper_AA=81.67 if cfg.get('backbone','large')=='large' else None,
+                       paper_forgetting=4.07 if cfg.get('backbone','large')=='large' else None)
         atomic_json(summary, self.out / 'summary.json')
 
 

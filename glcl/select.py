@@ -11,7 +11,8 @@ def main():
     p.add_argument('--root', required=True)
     p.add_argument('--out', required=True)
     args = p.parse_args()
-    config = json.loads((Path(__file__).resolve().parents[1] / 'configs/phase1.json').read_text())
+    from .configuration import load_config
+    config = load_config('tune')
     scores, identities = {}, []
     for arm in ('GL', 'MambaCL+GL'):
         scores[arm] = {}

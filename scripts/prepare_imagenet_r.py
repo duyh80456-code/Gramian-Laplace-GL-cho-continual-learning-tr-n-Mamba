@@ -108,14 +108,14 @@ def discover(search_root, splits, classes):
     return next(iter(candidates.values()))
 
 
-def find_checkpoint(search_root):
+def find_checkpoint(search_root, checkpoint_name='defocus_mamba_large_cls_21k.pth'):
     errors, choices = [], {}
     for path, dirs, files in walk_inputs(search_root, errors):
-        if 'defocus_mamba_large_cls_21k.pth' in files:
-            checkpoint = path / 'defocus_mamba_large_cls_21k.pth'
+        if checkpoint_name in files:
+            checkpoint = path / checkpoint_name
             choices[checkpoint.resolve()] = checkpoint
     if len(choices) != 1:
-        raise ValueError('Expected one defocus_mamba_large_cls_21k.pth; set PRETRAINED explicitly. '
+        raise ValueError('Expected one '+checkpoint_name+'; set PRETRAINED explicitly. '
                          + json.dumps(dict(candidates=[str(p) for p in choices.values()],
                                            mounts=input_inventory(search_root), walk_errors=errors)))
     return next(iter(choices.values()))
@@ -372,12 +372,13 @@ def main():
     parser.add_argument('--input', default='/kaggle/input', help='Search every file beneath this root')
     parser.add_argument('--stage', help='Writable destination for official split symlinks')
     parser.add_argument('--report')
+    parser.add_argument('--checkpoint-name',default='defocus_mamba_large_cls_21k.pth')
     parser.add_argument('--find-checkpoint', metavar='SEARCH_ROOT', help='Locate checkpoint through Kaggle directory symlinks')
     parser.add_argument('--download-official', action=argparse.BooleanOptionalAction, default=True,
                         help='Automatically fetch the author archive if attached filenames do not match (default: enabled)')
     args = parser.parse_args()
     if args.find_checkpoint:
-        print(find_checkpoint(args.find_checkpoint))
+        print(find_checkpoint(args.find_checkpoint,args.checkpoint_name))
         return
     if not args.stage or not args.report:
         parser.error('--stage and --report are required for data preparation')

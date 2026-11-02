@@ -439,3 +439,33 @@ free space or Output-budget exhaustion still produce controlled PAUSED, retainin
 the last committed checkpoint. Interrupted unsaved work is consequently repeated
 on resume. This distinction implements the user's request to tolerate save I/O
 errors without silently disabling the2GiB capacity guard.
+
+### Separate01 tuning notebook for De-focus Mamba Base classification
+
+The user requested01's schedule with defocus_mamba_base_cls. Add only
+01_tune_base_s0.ipynb; existing large notebooks retain their published pins.
+Use the upstream classification base architecture:24 Mamba blocks, embedding768,
+intermediate1536 and the original state/rank/group/rope settings. The base
+classification weights are defocus_mamba_base_cls.pth, not a detection checkpoint.
+The CL override keeps drop-path0 and a single classification head as in large01;
+only unused head2 weights may be unexpected during base pretrained loading. Missing
+backbone keys or any other unexpected keys are rejected; shape mismatches remain
+fatal. No backbone is silently initialized from unmatched weights.
+
+Reference: https://github.com/OpenGVLab/De-focus-Attention-Networks/blob/main/classification/configs/defocus_mamba_base.yaml
+and the base classifier constructor in the pinned vendored source. The base
+checkpoint is linked from the official classification results table:
+https://github.com/OpenGVLab/De-focus-Attention-Networks .
+
+Schedule, lambda grid, holdout, AMP/fp32-GL split, resize256,20-update fit/throughput
+probe and two GPU lanes match01. GL_BACKBONE=base selects a separate config and
+profile hash; run/source/output paths are separate from large. Resume and restored
+selection/profile metadata are filtered by recorded backbone, including standalone
+checkpoint detection. The base classification pretraining differs from the paper's
+large21K checkpoint; paper81.67 is not a base reproduction target.
+
+CPU checks pass for stage schedule, config/profile separation, exact checkpoint
+filename lookup, checkpoint-header backbone detection and cross-backbone restore
+isolation, alongside the registered section-six checks. No full base model or
+CUDA checkpoint load/throughput measurement was run locally; the notebook probe
+performs the actual T4 fit and speed check before tuning.

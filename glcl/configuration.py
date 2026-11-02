@@ -5,12 +5,18 @@ import os
 from .io import ROOT
 
 
+def config_path():
+    backbone=os.environ.get('GL_BACKBONE','large')
+    if backbone not in ('large','base'):raise ValueError('GL_BACKBONE must be large or base')
+    return ROOT/'configs'/('phase1_base.json' if backbone=='base' else 'phase1.json')
+
+
 def base_config_hash():
-    return hashlib.sha256((ROOT/'configs/phase1.json').read_bytes()).hexdigest()
+    return hashlib.sha256(config_path().read_bytes()).hexdigest()
 
 
 def load_config(stage, microbatch=None, use_checkpoint=None):
-    cfg=json.loads((ROOT/'configs/phase1.json').read_text())
+    cfg=json.loads(config_path().read_text())
     if stage=='tune':
         cfg['epochs']=cfg['tune_epochs']
         cfg['decay_milestones']=cfg['tune_decay_milestones']

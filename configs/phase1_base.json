@@ -1,0 +1,67 @@
+{
+  "dataset": "imagenet_r",
+  "num_tasks": 10,
+  "seed": 0,
+  "arms": [
+    "MambaCL",
+    "GL",
+    "MambaCL+GL"
+  ],
+  "lambda_grid": [
+    0.1,
+    1.0,
+    10.0
+  ],
+  "mu": 0.0001,
+  "gamma": 0.95,
+  "validation_fraction": 0.1,
+  "validation_tasks": 3,
+  "statistics_max_samples": 2000,
+  "epochs": 50,
+  "decay_milestones": [
+    25,
+    40
+  ],
+  "batch_size": 200,
+  "microbatch": 50,
+  "workers": 2,
+  "eval_workers": 1,
+  "eval_batch_size": 10,
+  "null_eta": 0.9,
+  "lr": 0.0002,
+  "lr_scale": 50,
+  "weight_decay": 5e-05,
+  "training_string": [
+    "head",
+    "x_proj",
+    "dt_proj",
+    "out_proj.weight",
+    "A_log"
+  ],
+  "baseline_training_string": [
+    "head",
+    "x_proj",
+    "out_proj.weight",
+    "A_log"
+  ],
+  "protocol": "amp_fp16_resize256_tune10_base_v2",
+  "use_amp": true,
+  "microbatch_candidates": [
+    50,
+    25,
+    10
+  ],
+  "use_checkpoint": false,
+  "persistent_workers": true,
+  "resize_short_side": 256,
+  "tune_epochs": 10,
+  "tune_decay_milestones": [
+    5,
+    8
+  ],
+  "expand_times": 5,
+  "backbone": "base",
+  "model_name": "defocus_mamba_base",
+  "model_config": "configs/defocus_mamba_base_cl.yaml",
+  "checkpoint_name": "defocus_mamba_base_cls.pth"
+}

@@ -119,7 +119,7 @@ def checkpoint_metadata(path):
     fields, pending = {}, None
     unknown = object()
     memo, last = {}, unknown
-    keys = ('task', 'epoch', 'task_complete', 'arm', 'stage', 'strength', 'source_sha256')
+    keys = ('task', 'epoch', 'task_complete', 'arm', 'stage', 'strength', 'source_sha256', 'backbone')
     for op, arg, _ in pickletools.genops(prefix):
         if op.name in ('BINPUT', 'LONG_BINPUT', 'PUT'):
             memo[int(arg)] = last
@@ -220,7 +220,10 @@ def restore_direct(inputs, working):
                     catalog[str(relative)].append(str(path))
             elif path.name == 'latest.pt' and len(relative.parts) == 3:
                 try:
-                    if not compatible_source(checkpoint_metadata(path).get('source_sha256')):
+                    info=checkpoint_metadata(path)
+                    if info.get('backbone','large')!=os.environ.get('GL_BACKBONE','large'):
+                        continue
+                    if not compatible_source(info.get('source_sha256')):
                         continue
                     rank = checkpoint_position(path)
                 except (ValueError, OSError, zipfile.BadZipFile, StopIteration):
@@ -244,6 +247,7 @@ def restore_direct(inputs, working):
                 info = checkpoint_metadata(path)
                 if (info.get('arm') not in ('MambaCL', 'GL', 'MambaCL+GL')
                         or info.get('stage') not in ('main', 'tune')
+                        or info.get('backbone','large')!=os.environ.get('GL_BACKBONE','large')
                         or not compatible_source(info.get('source_sha256'))):
                     continue
                 job = info['arm'] if info['stage'] == 'main' else f"{info['arm']}_lambda{info['strength']:g}"
@@ -286,7 +290,7 @@ def restore_direct(inputs, working):
     # Results/selection metadata are small; completed runs stay skippable.
     for root in sorted(roots, key=lambda p: p.stat().st_mtime):
         identities=list(root.glob('*/*/identity.json'))
-        if identities and not any(compatible_source(json.loads(p.read_text()).get('source_sha256')) for p in identities):
+        if identities and not any((compatible_source(json.loads(p.read_text()).get('source_sha256')) and json.loads(p.read_text()).get('config',{}).get('backbone','large')==os.environ.get('GL_BACKBONE','large')) for p in identities):
             continue
         for file in root.iterdir():
             if file.is_file() and not file.name.startswith('.') and file.suffix in ('.json', '.csv', '.md', '.log'):
