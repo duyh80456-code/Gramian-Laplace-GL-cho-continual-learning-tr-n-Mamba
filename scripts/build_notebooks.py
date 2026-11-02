@@ -42,9 +42,11 @@ WORKING.mkdir(parents=True, exist_ok=True)
 os.chdir(WORKING)
 REPO = Path('/kaggle/working/gramian-laplace')
 RUN_ROOT = Path('/kaggle/working/glcl')
-EPHEMERAL = Path('/kaggle/temp/glcl')
+EPHEMERAL = Path('/tmp/glcl')
 os.environ.update(GL_EPHEMERAL_ROOT=str(EPHEMERAL), UV_CACHE_DIR=str(EPHEMERAL/'cache/uv'),
-                  PIP_CACHE_DIR=str(EPHEMERAL/'cache/pip'))
+                  PIP_CACHE_DIR=str(EPHEMERAL/'cache/pip'), TMPDIR=str(EPHEMERAL/'tmp'),
+                  UV_PYTHON_INSTALL_DIR=str(EPHEMERAL/'python'), GL_MIN_FREE_BYTES=str(2*1024**3))
+(EPHEMERAL/'tmp').mkdir(parents=True, exist_ok=True)
 OUTPUT = RUN_ROOT / 'glcl_outputs'
 ROOT_OUT = OUTPUT
 subprocess.run([sys.executable, '-c', STORAGE_PREFLIGHT, '--working', str(RUN_ROOT),
@@ -135,7 +137,21 @@ if PRETRAINED is None:
         env=ENV, text=True).strip()
 print('Data:', DATA_ROOT, 'Weights:', PRETRAINED)
 '''
+benchmark = '''
+# Required throughput gate: fresh MambaCL,20 optimizer steps on GPU0 only.
+BENCHMARK_OUT = OUTPUT/'throughput_probe'
+probe = [PYTHON, 'scripts/benchmark_throughput.py', '--data', DATA_ROOT,
+         '--pretrained', PRETRAINED, '--out', str(BENCHMARK_OUT)]
+probe_result = subprocess.run(probe, env=ENV)
+if probe_result.returncode != 0:
+    raise RuntimeError('01 is PAUSED before tuning: inspect throughput_probe/benchmark.json and benchmark output. Below10 images/s requires review.')
+'''
 launch = '''
+# Also enforce the gate here if this launch cell is run manually.
+if STAGE == 'tune':
+    subprocess.run([PYTHON, 'scripts/benchmark_throughput.py', '--verify-only',
+                    '--data', DATA_ROOT, '--pretrained', PRETRAINED,
+                    '--out', str(OUTPUT/'throughput_probe')], env=ENV, check=True)
 DEADLINE = SESSION_START + 11*3600  # includes environment setup; 5-min hard grace
 jobs_path = RUN_ROOT/'effective_jobs'/f'{STAGE}.json'
 atomic_json(JOBS, jobs_path)
@@ -201,10 +217,13 @@ SESSION_START = time.time()
         stage_launch = stage_launch.replace(
             'result = subprocess.run(command, env=ENV)',
             "observer = [PYTHON, '-u', '-c', PERFORMANCE_OBSERVER, '--root', str(OUTPUT), '--jobs', str(jobs_path), '--', *command]\nresult = subprocess.run(observer, env=ENV)")
-    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nActive CPU checks pass and are recomputed. CUDA compatibility, VRAM and throughput remain unmeasured.'),
+    cells = [cell('markdown', f'# {title}\n\n{description}\n\nSame setup flow as H4: Internet ON, Kaggle Secret `github_token`, T4 x2. Source is cloned from GitHub and checked out at a fixed commit. Attach official pretrained weights. Original ImageNet-R images or imagenet-r.tar are optional Inputs: all Input files are searched automatically. If filenames have been changed (as in my1nonly/imagenet-r), the notebook automatically downloads the author archive (about2.19GB) with Internet ON. It preserves the exact Mamba-CL24000/6000 split and200 classes; it never guesses a mapping from renamed files. Previous Output is for resume and for carrying01 selection into02. Checkpoints are compact; large immutable contexts/curvature can remain on earlier Output Inputs. Keep the shards listed in resume_dependencies.json attached. Archives are optional; the default saves the Output tree directly. No source ZIP is required.\n\nEvery10 optimizer steps, live output shows throughput, peak VRAM, GPU utilization and exposed dataloader wait. progress.json updates each step; resume still uses the last committed epoch. Heartbeats show /kaggle/working usage and request PAUSED below2GiB free. Before01 launches either lane, an isolated20-step MambaCL probe on GPU0 must reach10 images/s; slower results stop for review. CPU checks pass; actual GPU throughput remains to be measured on Kaggle.'),
              cell('code', config), cell('code', setup), cell('code', core_install), cell('code', tests)]
     if stage != 'tests':
-        cells += [cell('code', restore), cell('code', kernel_install), cell('code', stage_launch), cell('code', report)]
+        cells += [cell('code', restore), cell('code', kernel_install)]
+        if stage == 'tune':
+            cells += [cell('code', benchmark)]
+        cells += [cell('code', stage_launch), cell('code', report)]
     notebook = dict(cells=cells, metadata=dict(kernelspec=dict(display_name='Python 3', language='python', name='python3'),
                     language_info=dict(name='python', version='3.11'), kaggle=dict(accelerator='nvidiaTeslaT4', isInternetEnabled=True, language='python', sourceType='notebook')), nbformat=4, nbformat_minor=5)
     path = ROOT/'notebooks'/f'{name}.ipynb'

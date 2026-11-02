@@ -112,6 +112,10 @@ def prepare(working, ephemeral, repo=None):
                 size = archive.stat().st_size
                 archive.unlink()
                 removed.append(dict(path=str(archive), bytes=size, reason='Verified extracted original images; redundant download cache'))
+    legacy_ephemeral = working.parent.parent / 'temp/glcl'
+    if legacy_ephemeral.resolve() != ephemeral.resolve():
+        for name in ('env', 'input_data', 'cache', 'python', 'legacy_resume'):
+            migrate_directory(legacy_ephemeral/name, ephemeral/name, events)
     migrate_directory(working.parent / 'glcl_env', ephemeral / 'env', events)
     migrate_directory(working / 'input_data', ephemeral / 'input_data', events)
     result = dict(removed_failed_temporary_files=removed, recovered_complete_temporary_checkpoints=recovered, migrations=events,

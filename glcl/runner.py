@@ -85,6 +85,10 @@ def unpack_cache(cache, model):
     return result
 
 
+class BenchmarkComplete(Exception):
+    pass
+
+
 class Runtime:
     def __init__(self, args, config):
         self.args, self.config = args, config
@@ -101,6 +105,8 @@ class Runtime:
         self._committed_context = None
         self._committed_factors = set()
         self.valid_paths = set()
+        self.meter = None
+        self.gpu_utilization = None
         self.identity = dict(source_sha256=digest_sources(), config=config, arm=args.arm,
                              stage=args.stage, strength=args.strength, seed=0,
                              dataset_manifest=self.data_manifest(args.data_root),
@@ -160,12 +166,34 @@ class Runtime:
         if self.resume and not self.resume['task_complete'] and gvm.cl_mngr.current_taskid == self.resume['task'] and epoch <= self.resume['epoch']:
             return 'restored epoch'
         self.check_next_checkpoint(gvm, model, optimizer)
-        if self.config['microbatch'] >= self.config['batch_size']:
-            return self.original_epoch(gvm, epoch, loader, model, criterion, optimizer)
         # Preserve upstream effective minibatches and one ModAdam step per batch.
         # Only split memory use; CE is sample weighted, GL applied once per update.
         total_loss, total_correct, total = 0., 0, 0
-        for images, labels in loader:
+        from .telemetry import StepMeter, GPUUtilization, check_free
+        if self.meter is None:
+            self.gpu_utilization = GPUUtilization()
+            torch.cuda.reset_peak_memory_stats()
+            self.meter = StepMeter(self.out, self.args.arm,
+                lambda: dict(allocated=torch.cuda.max_memory_allocated(),
+                             reserved=torch.cuda.max_memory_reserved()), self.gpu_utilization)
+        iterator_start = time.perf_counter()
+        iterator = iter(loader)
+        iterator_setup = time.perf_counter() - iterator_start
+        step_in_epoch = 0
+        while True:
+            check_free(self.out)
+            if (self.out.parent.parent / '.pause_requested').exists():
+                raise StoragePause('Launcher requested pause; last committed epoch retained.')
+            waiting = time.perf_counter()
+            try:
+                images, labels = next(iterator)
+            except StopIteration:
+                break
+            wait = time.perf_counter() - waiting
+            if step_in_epoch == 0:
+                wait += iterator_setup
+            torch.cuda.synchronize()
+            compute_start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
             N = len(images)
             for start in range(0, N, self.config['microbatch']):
@@ -182,6 +210,26 @@ class Runtime:
                     penalty.backward()
             optimizer.step()
             total += N
+            torch.cuda.synchronize()
+            compute = time.perf_counter() - compute_start
+            step_in_epoch += 1
+            self.meter.record(gvm.cl_mngr.current_taskid, epoch, step_in_epoch, N, wait, compute)
+            if getattr(self.args, 'benchmark_steps', 0) and self.meter.step == self.args.benchmark_steps:
+                result = self.meter.summary()
+                fraction = result['dataloader_wait_fraction']
+                result.update(status='PASS' if result['images_per_second'] >= 10 else 'SLOW',
+                    minimum_images_per_second=10, identity=self.identity,
+                    gpu_count=1, dataloader_workers=self.config['workers'],
+                    host_cpu_count=os.cpu_count(), effective_batch=self.config['batch_size'],
+                    microbatch=self.config['microbatch'], data_root=str(Path(self.args.data_root).resolve()),
+                    pretrained=str(Path(self.args.pretrained).resolve()),
+                    timing='20 real optimizer steps; includes loader startup/wait; excludes setup/checkpoint/progress I/O; no warmup excluded',
+                    loader_diagnosis='Exposed loader wait >=20%: loader/CPU bottleneck suspected' if fraction >= .2
+                        else 'Exposed loader wait <20%; compute dominates this single-process probe',
+                    limitation='One process with2 workers; two-process CPU contention must be assessed from live telemetry.')
+                atomic_json(result, self.out / 'benchmark.json')
+                print('BENCHMARK_RESULT ' + json.dumps(result), flush=True)
+                raise BenchmarkComplete()
         return f'loss={total_loss / total:.4f} acc_top1={total_correct / total:.2%}'
 
     def skip_epoch(self, gvm, epoch):
@@ -261,6 +309,8 @@ class Runtime:
                          elapsed_seconds=state['elapsed'], statistics_floats=self.gl.floats()), self.out / 'progress.json')
 
     def epoch_end(self, gvm, task, epoch, model, optimizer, scheduler):
+        if getattr(self.args, 'benchmark_steps', 0):
+            return
         if self.resume and not self.resume['task_complete'] and task == self.resume['task'] and epoch <= self.resume['epoch']:
             return
         self.save(gvm, task, epoch, model, optimizer, scheduler)
@@ -285,6 +335,8 @@ class Runtime:
         atomic_json({str(k): [str(Path(p).relative_to(self.args.data_root)) for p in v] for k, v in valid.class_imgpath_dict.items()}, self.out / 'validation_paths.json')
 
     def run(self):
+        if getattr(self.args, 'benchmark_steps', 0) and torch.cuda.device_count() != 1:
+            raise RuntimeError('The20-step benchmark must expose exactly one CUDA GPU')
         official = load_official(self)
         argv = sys.argv
         cfg = self.config
@@ -384,10 +436,15 @@ def main():
     p.add_argument('--stage', required=True, choices=['tune', 'main'])
     p.add_argument('--strength', type=float, default=1.)
     p.add_argument('--selection')
+    p.add_argument('--benchmark-steps', type=int, default=0)
     p.add_argument('--data-root', required=True)
     p.add_argument('--pretrained', required=True)
     p.add_argument('--out', required=True)
     a = p.parse_args()
+    if a.benchmark_steps and (a.benchmark_steps != 20 or a.arm != 'MambaCL' or a.stage != 'tune'):
+        p.error('Benchmark requires exactly20 steps, arm MambaCL, stage tune')
+    if a.benchmark_steps and (Path(a.out)/'latest.pt').exists():
+        p.error('Benchmark output must be isolated from training checkpoints')
     require_tests()
     cfg = json.loads((ROOT / 'configs/phase1.json').read_text())
     if a.stage == 'main' and a.arm != 'MambaCL':
@@ -404,12 +461,17 @@ def main():
                 raise RuntimeError('Selection mismatch: ' + key)
     try:
         runtime.run()
+    except BenchmarkComplete:
+        return
     except StoragePause:
         try:
             runtime.prune_uncommitted()
         except OSError as error:
             print('Could not remove uncommitted scratch artifacts:', str(error), flush=True)
         raise
+    finally:
+        if runtime.gpu_utilization is not None:
+            runtime.gpu_utilization.close()
 
 if __name__ == '__main__':
     try:

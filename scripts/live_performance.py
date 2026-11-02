@@ -27,6 +27,9 @@ def value(line, key, percent=False):
 
 def metric_event(line, stage):
     line = line.strip()
+    if line.startswith('STEP_METRICS '):
+        fields = json.loads(line[len('STEP_METRICS '):])
+        return 'THROUGHPUT', fields, line
     score = 'val_acc' if stage == 'tune' else 'test_acc'
     task = re.search(r'Task \[\s*(\d+)\s*/\s*(\d+)\s*\]', line)
     epoch = re.search(r'Epoch \[\s*(\d+)\s*/\s*(\d+)\s*\]', line)

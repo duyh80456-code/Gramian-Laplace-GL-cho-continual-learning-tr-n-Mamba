@@ -1,0 +1,30 @@
+{
+  "status": "PASS_CPU_CHECKS",
+  "gpu_benchmark_status": "PENDING_KAGGLE_EXECUTION",
+  "minimum_images_per_second": 10,
+  "benchmark_optimizer_steps": 20,
+  "benchmark_gpu_count": 1,
+  "production_min_free_bytes": 2147483648,
+  "checks": [
+    "timing aggregation every10 optimizer steps",
+    "progress JSON updates every step",
+    "GPU unavailable is null",
+    "2GiB free-space pause",
+    "source/data/pretrained-bound benchmark gate",
+    "slow/incomplete/stale/multi-GPU reports rejected",
+    "instrumented tiny CPU optimizer loop stops exactly at20 steps without writing training checkpoint",
+    "storage/legacy checkpoint resume regression checks",
+    "section-six CPU math checks"
+  ],
+  "commands": [
+    "python3 -m tests.step_telemetry",
+    "GL_MIN_FREE_BYTES=16777216 python3 -m tests.storage_resume",
+    "GL_MIN_FREE_BYTES=16777216 python3 -m tests.storage_bootstrap",
+    "python3 -m tests.section6"
+  ],
+  "limitations": [
+    "No local CUDA/T4 device; actual MambaCL throughput and dataloader diagnosis are not measured here",
+    "One-GPU probe cannot rule out contention from two concurrent workers; live metrics cover both lanes",
+    "Live step progress is not step-level resume; last committed epoch is retained"
+  ]
+}

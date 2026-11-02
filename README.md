@@ -128,7 +128,7 @@ packing: upper triangle plus XOR residual for the lower triangle, byte shuffled
 and compressed. Asymmetric rounding, signed zeros and NaN payloads are retained;
 there is no precision reduction or change to the training formulas.
 
-Environment/download caches and staged images use `/kaggle/temp/glcl`, outside
+Environment/download caches and staged images use `/tmp/glcl`, outside
 saved Output. This location may share the physical disk: moving files avoids
 Output quota use, but does not promise additional physical capacity. The redundant
 downloaded ImageNet-R tar is removed only after all original images are verified.
@@ -139,7 +139,7 @@ checkpoint is promoted only after ZIP CRC validation; existing latest.pt and
 valid old archives are retained. It refuses cleanup while an old GL worker or
 launcher is active. Stop the failed run before running the new notebook.
 
-Writes share a cross-process lock. Capacity guards preserve1GiB free disk and a
+Writes share a cross-process lock. Capacity guards preserve2GiB free disk and a
 conservative16GiB saved-Output payload ceiling. Insufficient capacity pauses with
 exit75, retaining the last committed checkpoint. The failed write is cleaned up.
 Save that Output, attach it in a fresh session, then rerun the same notebook.
@@ -165,6 +165,47 @@ python3 -m tests.storage_bootstrap
 ```
 
 These exercise a tiny model and fault injection, not full Mamba training.
+
+## Step telemetry and mandatory01 throughput gate
+
+Before launching either01 tuning lane, an isolated process runs exactly20 actual
+MambaCL optimizer steps on GPU0, with the official frozen dt_proj parameter set,
+effective batch200, microbatch5, AutoAugment and2 dataloader workers. Steps can
+span epochs; there is no excluded warmup. This process never writes a training
+checkpoint or selection and its updated weights/optimizer are discarded. The
+report is `glcl_outputs/throughput_probe/benchmark.json` and prints directly in
+the notebook. It records seconds/step, actual images/second and exposed loader
+wait fraction. Below10 images/second produces SLOW/exit75 and blocks tuning;
+manual launch and the launcher also validate the gate against source/config,
+dataset and pretrained hashes. A new01 Run All measures again.
+
+Every10 optimizer steps, both01 and02 print STEP_METRICS with mean seconds/step,
+images/second, dataloader wait seconds/fraction, peak allocated/reserved GPU memory
+and GPU utilization averaged from nvidia-smi samples collected about once/second.
+Unavailable utilization is null, not a fabricated zero. GPU operations are
+synchronized for timing. Timings include exposed loader startup/wait and model
+compute/update, excluding setup/checkpoint/progress-file writes. Peak memory is
+since the worker's first training step; step counts restart with each worker.
+progress.json updates each completed optimizer step, but **is not a step-level
+checkpoint**: PAUSED during an epoch resumes from the last committed epoch.
+
+The benchmark reports suspected loader pressure when exposed wait is at least20%
+of measured step time. Smaller waits indicate compute dominates the single-worker
+probe, but do not rule out CPU contention in two concurrent training processes.
+The registered workers/AutoAugment are unchanged so the probe and subsequent
+per-arm live telemetry can assess the4-CPU concern without changing data transforms.
+
+Every30-second heartbeat reports bytes/GiB used under /kaggle/working and physical
+free space. Below2GiB requests PAUSED; workers check at optimizer-step boundaries
+and retain their last committed checkpoint. Write reservations also retain2GiB.
+Venv, uv-managed Python, uv/pip cache, temporary files, downloaded dataset tar and
+extracted images are under /tmp/glcl. Generated tar is deleted immediately after
+successful extraction. /tmp may still share the physical disk with /kaggle/working;
+both physical capacity and saved-Output quota are guarded.
+
+CPU-only verification additionally runs `python3 -m tests.step_telemetry`.
+Actual20-step MambaCL throughput and the loader diagnosis require the Kaggle GPU
+session; no local CPU fixture is reported as a GPU measurement.
 
 ## Interpretation and remaining validation
 

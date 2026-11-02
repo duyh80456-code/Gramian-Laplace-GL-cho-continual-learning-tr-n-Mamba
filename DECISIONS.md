@@ -341,3 +341,45 @@ because this machine itself has little free disk; production remains1GiB. No
 CUDA/full Mamba/end-to-end benchmark run was executed locally. The downloaded
 old startup archive contained epoch0, not the later epoch1 state; recovery of the
 user's epoch1 requires their actual valid latest.pt or newer saved Output.
+
+
+### User-requested per-step telemetry and20-step gate
+
+The user explicitly requested a20-optimizer-step MambaCL measurement before01,
+with a halt below roughly10 images/second. This authorizes that short full-model
+measurement on Kaggle, replacing the prior no-smoke restriction for this specific
+probe only. No full benchmark training is launched locally. Probe uses one GPU,
+original MambaCL trainable set, unchanged effective batch/microbatch, transforms
+and2 workers;20 actual updates can span epochs, without excluded warmup. Probe
+weights/optimizer are discarded in an isolated child and never become tuning
+checkpoints or selections. SLOW reports stop before either tuning lane. Source,
+config/data/pretrained identity and step count are checked again at launch.
+
+Every10 steps prints synchronization-based optimizer timing, actual images/sec,
+exposed loader startup/wait, peak allocated/reserved memory and sampled nvidia-smi
+GPU utilization. Missing GPU samples are reported as null. progress.json updates
+each optimizer step and explicitly distinguishes live progress from the last
+epoch checkpoint. Step counts are per worker/session. A20% exposed-wait fraction
+is a diagnostic heuristic for suspected loader pressure, not a proof of causality.
+Single-process results cannot rule out contention from2 processes x2 loader
+workers on4 CPUs; live dual-lane metrics are provided for that comparison.
+
+Use /tmp/glcl for venv, managed Python, uv/pip caches, scratch, downloaded tar and
+extracted original images. Bootstrap also migrates generated files from the
+previous /kaggle/temp/glcl location. Delete only the generated downloaded tar
+immediately after successful extraction. Default free-space reserve increases
+from1GiB to2GiB. Every heartbeat prints working-tree usage and filesystem free
+space and signals PAUSED below2GiB. Workers observe the signal/free-space guard
+at optimizer boundaries and retain the last epoch checkpoint, repeating any
+uncommitted partial epoch. Existing atomic latest-only writes and optional
+nonfatal archive support are retained; periodic tar remains disabled.
+
+The exact prior storage-fix source digest
+14cd107b63e021c1475deedd005888b8c56bbec3fba47088bbd067200f34cefe
+is additionally audited for migration; all non-source identity fields stay exact.
+CPU verification covers timing aggregation, observer parsing, each-step progress,
+2GiB pause, rejection of slow/incomplete/stale/multi-GPU gate reports, and the
+actual instrumented loop stopping at20 updates across two tiny CPU epochs without
+writing a training checkpoint. Storage/legacy resume checks and section-six pass.
+GPU throughput, VRAM and utilization remain PENDING until the user runs Kaggle;
+no images/sec numbers from CPU fixtures are presented as MambaCL performance.

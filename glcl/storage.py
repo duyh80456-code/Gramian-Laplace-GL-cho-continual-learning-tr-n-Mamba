@@ -10,7 +10,8 @@ import shutil
 import zipfile
 
 # Audited pre-storage-fix source, including the user's 9367998 Kaggle run.
-LEGACY_SOURCES = {'ddf74bae8905a19b6d4a83ac0fba297407a8815fbfa197814ff5498923afa07a'}
+LEGACY_SOURCES = {'ddf74bae8905a19b6d4a83ac0fba297407a8815fbfa197814ff5498923afa07a',
+                  '14cd107b63e021c1475deedd005888b8c56bbec3fba47088bbd067200f34cefe'}
 
 
 class StoragePause(RuntimeError):
@@ -76,7 +77,7 @@ def require_space(path, incoming):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(path.parent).free
-    reserve = int(os.environ.get('GL_MIN_FREE_BYTES', str(1024**3)))
+    reserve = int(os.environ.get('GL_MIN_FREE_BYTES', str(2 * 1024**3)))
     # Tensor storages dominate torch serialization; allow metadata/alignment too.
     needed = int(incoming * 1.03) + 4 * 1024**2 + reserve
     # Kaggle's saved-Output quota is independent of filesystem free space on

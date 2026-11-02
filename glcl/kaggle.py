@@ -9,6 +9,7 @@ import tarfile
 import threading
 import time
 import shutil
+from .telemetry import disk_status, check_free
 from .io import atomic_json
 from .storage import (StoragePause, compatible_source, disk_writer, require_space,
                       restore_direct)
@@ -61,7 +62,7 @@ def restore(inputs, working):
         # there and reused; only latest model/optimizer state is restored below.
         import hashlib
         tag = hashlib.sha256((str(choices[0]) + str(choices[0].stat().st_size)).encode()).hexdigest()[:16]
-        cache = Path(os.environ.get('GL_EPHEMERAL_ROOT', '/kaggle/temp/glcl')) / 'legacy_resume' / tag
+        cache = Path(os.environ.get('GL_EPHEMERAL_ROOT', '/tmp/glcl')) / 'legacy_resume' / tag
         cache.mkdir(parents=True, exist_ok=True)
         marker = cache / '.complete'
         incoming = sum(m.size for m in tar.getmembers() if m.isfile() and not m.name.endswith('.tmp')
@@ -101,6 +102,14 @@ def run_lanes(jobs, root, data, pretrained, deadline, selection=None, make_archi
                 print('OPTIONAL ARCHIVE SKIPPED:', repr(exc), flush=True)
     def heartbeat():
         while not stop.wait(30):
+            working = Path('/kaggle/working') if Path('/kaggle/working').is_dir() else root
+            try:
+                status = disk_status(working)
+                print('DISK ' + json.dumps(dict(path=str(working), working_used_GiB=round(status['working_used_bytes']/1024**3, 2), free_GiB=round(status['free_bytes']/1024**3, 2), **status)), flush=True)
+                check_free(working)
+            except StoragePause as error:
+                atomic_json(dict(reason=str(error)), pause_marker)
+                print('STORAGE PAUSED:', str(error), flush=True)
             print('GPU lanes:', json.dumps(lanes), flush=True)
             for p in root.rglob('progress.json'):
                 print(str(p.relative_to(root)), p.read_text().strip(), flush=True)
@@ -198,6 +207,8 @@ def main():
     config = json.loads((ROOT / 'configs/phase1.json').read_text())
     selection = Path(args.root) / 'selection.json'
     if args.stage == 'tune':
+        from scripts.benchmark_throughput import verify
+        verify(Path(args.root)/'throughput_probe/benchmark.json', args.data, args.pretrained)
         jobs = [[dict(name=f'{arm}_lambda{strength:g}', arm=arm, strength=strength, stage='tune')
                  for strength in config['lambda_grid']] for arm in ('GL', 'MambaCL+GL')]
     else:
@@ -229,7 +240,7 @@ def main():
     if args.archive:
         try:
             archive(Path(args.root), Path(args.root).parent / 'glcl_outputs.tar.gz')
-        except StoragePause as error:
+        except Exception as error:
             print('OPTIONAL ARCHIVE SKIPPED:', str(error), flush=True)
     raise SystemExit(75 if 75 in statuses else 0)
 

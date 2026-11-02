@@ -330,6 +330,8 @@ def prepare(search_root, destination, report, allow_download=False):
             archive.unlink()
             archive = download_official(cache)
             found = unpack_official_names(archive, images, splits, classes)
+        archive.unlink()  # Generated download only; all required images extracted successfully.
+        print('Removed downloaded tar immediately after successful extraction.', flush=True)
         kind, origin = 'official_download', OFFICIAL_URL
     if set(found) != required:
         missing = sorted(required - set(found))
