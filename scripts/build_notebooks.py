@@ -34,6 +34,11 @@ from kaggle_secrets import UserSecretsClient
 os.environ.update(TQDM_DISABLE='1', PYTHONUNBUFFERED='1',
                   PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION='python')
 MAIN_URL = 'https://github.com/duyh80456-code/Gramian-Laplace-GL-cho-continual-learning-tr-n-Mamba.git'
+WORKING = Path('/kaggle/working')
+# A previous execution leaves the kernel inside REPO. Always leave that tree
+# before removing it, and also recover if a prior run already deleted the cwd.
+WORKING.mkdir(parents=True, exist_ok=True)
+os.chdir(WORKING)
 REPO = Path('/kaggle/working/gramian-laplace')
 RUN_ROOT = Path('/kaggle/working/glcl')
 OUTPUT = RUN_ROOT / 'glcl_outputs'
@@ -55,9 +60,9 @@ def private_clone(url, destination, commit):
     askpass.chmod(0o700)
     env = dict(os.environ, GITHUB_TOKEN_RUNTIME=token, GIT_ASKPASS=str(askpass), GIT_TERMINAL_PROMPT='0')
     try:
-        subprocess.run(['git', 'clone', '--filter=blob:none', '--no-checkout', url, str(destination)], env=env, check=True)
-        subprocess.run(['git', '-C', str(destination), 'fetch', 'origin', commit], env=env, check=True)
-        subprocess.run(['git', '-C', str(destination), 'checkout', '--detach', commit], env=env, check=True)
+        subprocess.run(['git', 'clone', '--filter=blob:none', '--no-checkout', url, str(destination)], cwd=destination.parent, env=env, check=True)
+        subprocess.run(['git', '-C', str(destination), 'fetch', 'origin', commit], cwd=destination.parent, env=env, check=True)
+        subprocess.run(['git', '-C', str(destination), 'checkout', '--detach', commit], cwd=destination.parent, env=env, check=True)
     finally:
         askpass.unlink(missing_ok=True)
 
@@ -66,7 +71,7 @@ if REPO.exists():
     shutil.rmtree(REPO)
 OUTPUT.mkdir(parents=True, exist_ok=True)
 private_clone(MAIN_URL, REPO, REPO_COMMIT)
-CODE_COMMIT = subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip()
+CODE_COMMIT = subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], cwd=WORKING, text=True).strip()
 if CODE_COMMIT != REPO_COMMIT:
     raise RuntimeError('Pinned repository revision mismatch')
 os.chdir(REPO)

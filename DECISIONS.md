@@ -189,3 +189,15 @@ ambiguous discovery prints a bounded mount listing and filesystem errors. The
 checkpoint finder uses the same symlink-aware walk instead of Path.rglob.
 A temporary filesystem reproduction covers directory aliases, duplicate aliases,
 cycles, an incomplete source and checkpoint discovery; no model was executed.
+
+### Safe reruns of the clone cell
+
+The kernel ends the clone cell inside the source checkout. Previously, rerunning
+that cell removed its own current working directory, so git clone inherited a
+deleted cwd and failed before contacting GitHub. The bootstrap now changes to
+/kaggle/working BEFORE deleting REPO, including recovery from an already deleted
+cwd, and supplies an explicit existing cwd to every Git subprocess. Source-only
+refresh still preserves outputs, staged inputs and the isolated environment.
+The runtime source pin is unchanged by this bootstrap-only fix. A local Git
+reproduction checks recovery from a deleted cwd and two consecutive executions,
+with a preserved output marker and no model or network execution.

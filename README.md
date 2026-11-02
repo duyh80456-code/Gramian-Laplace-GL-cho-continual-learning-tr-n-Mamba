@@ -49,6 +49,8 @@ No source ZIP or code overlay is attached to Kaggle.
 3. Run All. Source clone, isolated dependencies, registered CPU checks and
    import/GPU checks precede training. The first configuration cell exposes
    REPO_COMMIT, RUN_TAG, STAGE and both GPU JOBS queues, following H4.
+   The clone cell may be rerun safely: it leaves the source directory before
+   refreshing that checkout and keeps outputs and the environment intact.
 4. In01, GPU0 runs GL lambda0.1/1/10 and GPU1 runs hybrid lambda0.1/1/10.
    Selection uses only the10% training holdout on the first three tasks.
 5. If PAUSED, save the Output and attach it to the SAME notebook, keeping its
