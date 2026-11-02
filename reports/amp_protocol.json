@@ -31,7 +31,9 @@
     "reject mismatched old protocol",
     "compact checkpoint and same-protocol format restore",
     "disk/Output guards and injected save failures",
-    "bootstrap scratch cleanup and optional-archive failure"
+    "bootstrap scratch cleanup and optional-archive failure",
+    "mocked isolated-child OOM fallback50/25/10",
+    "transient save I/O continues; low disk pauses"
   ],
   "limitations": [
     "No CUDA/AMP numerical or throughput measurement on this local macOS CPU host",

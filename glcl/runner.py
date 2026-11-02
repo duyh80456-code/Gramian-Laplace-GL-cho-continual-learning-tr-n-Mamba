@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 import random
+import shutil
+import errno
 import re
 import sys
 import time
@@ -298,6 +300,22 @@ class Runtime:
                 path.unlink()
 
     def save(self, gvm, task, epoch, model, optimizer=None, scheduler=None, complete=False):
+        try:
+            return self._save(gvm,task,epoch,model,optimizer,scheduler,complete)
+        except (StoragePause,OSError) as error:
+            cause=error.__cause__ if isinstance(error,StoragePause) else error
+            reserve=int(os.environ.get('GL_MIN_FREE_BYTES',str(2*1024**3)))
+            capacity_errno=getattr(cause,'errno',None) in (errno.ENOSPC,getattr(errno,'EDQUOT',122))
+            # Non-capacity I/O failure: retain the previous checkpoint, continue
+            # training and retry the save at the next normal epoch boundary.
+            if (cause is not None and not capacity_errno
+                    and shutil.disk_usage(self.out).free >= reserve):
+                print('CHECKPOINT I/O WARNING: save skipped; previous checkpoint retained; '
+                      'training continues and next epoch retries. '+str(error),flush=True)
+                return False
+            raise
+
+    def _save(self, gvm, task, epoch, model, optimizer=None, scheduler=None, complete=False):
         if self.context_file is None:
             if self._encoded_cache is None:
                 self._encoded_cache = encode_cache(pack_cache(gvm, model))

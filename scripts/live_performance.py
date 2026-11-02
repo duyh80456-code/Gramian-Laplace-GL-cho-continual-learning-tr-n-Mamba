@@ -27,6 +27,8 @@ def value(line, key, percent=False):
 
 def metric_event(line, stage):
     line = line.strip()
+    if line.startswith('CHECKPOINT I/O WARNING:'):
+        return 'WARNING', {}, line
     if line.startswith('STEP_METRICS '):
         fields = json.loads(line[len('STEP_METRICS '):])
         return 'THROUGHPUT', fields, line

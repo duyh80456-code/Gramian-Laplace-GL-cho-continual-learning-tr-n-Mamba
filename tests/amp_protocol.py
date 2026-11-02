@@ -64,3 +64,19 @@ with tempfile.TemporaryDirectory() as temporary:
     saved=json.loads((root/'execution_profile.json').read_text())
     assert calls==[50,25,10] and saved['microbatch']==10 and not saved['use_checkpoint']
 print('Isolated OOM fallback order50/25/10 and shared profile persistence: PASS (mock children, no GPU)')
+
+# A transient save I/O failure must not abort training when capacity is adequate.
+from glcl.runner import Runtime
+from glcl.storage import StoragePause
+runtime=Runtime.__new__(Runtime);runtime.out=ROOT
+failure=OSError(5,'injected temporary I/O failure')
+def fail(*args,**kwargs):
+    raise StoragePause('save failed') from failure
+runtime._save=fail
+with patch('glcl.runner.shutil.disk_usage',return_value=SimpleNamespace(free=8*1024**3)),redirect_stdout(io.StringIO()):
+    assert runtime.save(None,0,1,None) is False
+with patch('glcl.runner.shutil.disk_usage',return_value=SimpleNamespace(free=0)):
+    try:runtime.save(None,0,1,None)
+    except StoragePause:pass
+    else:raise AssertionError('Low disk incorrectly continued training')
+print('Transient save I/O continues; insufficient disk still pauses: PASS')

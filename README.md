@@ -90,8 +90,8 @@ There is no periodic tar backup. Optional archive errors are nonfatal. Every30s
 heartbeat reports working-tree bytes/GiB and physical free space. Below2GiB requests
 PAUSED at an optimizer boundary, preserving the last epoch checkpoint. Atomic writes
 also reserve2GiB and enforce a16GiB Output payload ceiling. Save Output, attach it
-and all earlier dependency shards, and rerun the same notebook. Save failures pause
-rather than replacing a valid checkpoint with an incomplete file. Bootstrap cleans
+and all earlier dependency shards, and rerun the same notebook. Non-capacity save I/O failures warn, retain the prior checkpoint and let training
+continue; the next epoch retries. Capacity exhaustion produces controlled PAUSED. Bootstrap cleans
 failed generated temporaries and preserves valid checkpoint/archive files.
 
 ## CPU verification

@@ -432,3 +432,10 @@ checkpoint, with2GiB free-space guards/heartbeat. Old fp32 outputs are preserved
 separately and excluded from this protocol; do not resume them or reuse their
 selections after these scientific changes. Use a fresh Kaggle session for the new
 protocol when the old working filesystem is full.
+
+Non-capacity I/O failures during Runtime.save now warn and skip that save while
+training continues; the next epoch retries. Actual ENOSPC/EDQUOT, insufficient
+free space or Output-budget exhaustion still produce controlled PAUSED, retaining
+the last committed checkpoint. Interrupted unsaved work is consequently repeated
+on resume. This distinction implements the user's request to tolerate save I/O
+errors without silently disabling the2GiB capacity guard.
