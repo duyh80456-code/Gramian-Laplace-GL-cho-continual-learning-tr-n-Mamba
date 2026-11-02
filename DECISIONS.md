@@ -64,6 +64,13 @@ no configured Kaggle API credentials, and browser control was unavailable.
   hybrid add dt_proj, as required to evaluate section4.4. This is an experimental
   confound: hybrid-versus-baseline changes the trainable parameter set. Report it;
   an additional matched-parameter baseline would need a later scope decision.
+  The user explicitly confirmed this choice: keep dt_proj frozen for MambaCL
+  to retain the official baseline parameter set for comparison to paper81.67.
+  This does not guarantee that the observed AA will equal81.67.
+  comparison.csv and comparison.md disclose each run's training patterns and
+  the frozen/trainable status of dt_proj.weight and bias, read from that run's
+  recorded identity.json configuration. Both reports state the parameter-set
+  confound explicitly; missing recorded configurations are labeled UNKNOWN.
 - Pretrained YAML actually has RoPE, group norm64, and checkpointing enabled;
   time_step_rank=48, not D/16. None is disabled. Raw scan-output gradients are
   captured BEFORE normalization, skip, gating and out_proj, so w includes their

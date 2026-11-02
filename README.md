@@ -89,7 +89,10 @@ project source commit in its first configuration cell and logs the resolved
 commit to code_commit.json; source/config digests also protect resume identity.
 
 The official baseline freezes dt_proj; GL/hybrid include it to implement the
-requested Delta factors. This parameter-set difference must accompany comparisons.
+requested Delta factors. The user confirmed keeping this original baseline
+parameter set. comparison.csv and comparison.md report both dt_proj weight/bias
+status and each run's recorded training patterns, and explicitly disclose this
+parameter-set difference. Matching the parameter set does not guarantee AA81.67.
 RoPE/group normalization are retained and handled in statistics. No phase-two
 training methods, extra seeds or CIFAR runs are queued.
 

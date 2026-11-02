@@ -139,7 +139,7 @@ if result.returncode not in (0, 75):
 print('PAUSED: attach this Output and rerun same notebook' if result.returncode == 75 else 'Stage complete')
 '''
 report = '''
-for path in (OUTPUT/'selection.json', OUTPUT/'session.json', OUTPUT/'comparison.csv'):
+for path in (OUTPUT/'selection.json', OUTPUT/'session.json', OUTPUT/'comparison.csv', OUTPUT/'comparison.md'):
     if path.exists():
         print(path.name, path.read_text())
 print('Archive: /kaggle/working/glcl/glcl_outputs.tar.gz; attach it as previous Output to resume.')
